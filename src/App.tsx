@@ -1184,23 +1184,15 @@ export default function App() {
       </main>
 
       {/* Streamlined Footer */}
-      <footer className="mt-auto border-t border-slate-200 bg-white py-6 text-center text-xs text-slate-500">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 flex flex-col sm:flex-row items-center justify-between gap-4">
-          <div className="flex items-center gap-2">
-            <span className="font-black text-amber-600 tracking-tight font-mono">POKÉMON CHAMPIONS</span>
+      <footer className="mt-auto border-t border-slate-200 bg-white py-6 text-xs text-slate-500">
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 space-y-2 text-center">
+          <div className="flex items-center justify-center gap-2">
+            <span className="font-black text-amber-600 tracking-tight font-mono">CHAMPION</span>
             <span aria-hidden="true">·</span>
             <span>(1) 照片辨識 (2) 建議我方6隻 (3) 戰術分析</span>
           </div>
-          <div className="text-[11px] text-slate-600 font-mono">
-            資料參考：
-            <a
-              href="https://victorpoke-champions.com/zh-TW/pokemon"
-              target="_blank"
-              rel="noopener noreferrer"
-              className="text-amber-600 hover:underline font-bold ml-1"
-            >
-              https://victorpoke-champions.com/zh-TW/pokemon
-            </a>
+          <div className="text-[11px] text-slate-400 font-medium">
+            本網站為粉絲自製，與 Nintendo、Game Freak、The Pokémon Company 無關
           </div>
         </div>
       </footer>

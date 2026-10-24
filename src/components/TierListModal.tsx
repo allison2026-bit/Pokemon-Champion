@@ -69,13 +69,13 @@ export const TierListModal: React.FC<TierListModalProps> = ({
             </div>
             <div>
               <h2 className="text-lg font-black text-slate-900 flex items-center gap-2">
-                Pokémon Champions · 官方級別賽事天梯榜
+                Champion · 級別賽事天梯榜
                 <span className="text-[10px] font-mono font-bold text-amber-800 bg-amber-100 border border-amber-200 px-2 py-0.5 rounded-full">
                   Master Rank / WCS 錦標賽
                 </span>
               </h2>
               <p className="text-xs text-slate-500">
-                基於 52POKE 官方對戰數據、雙打環境禁用率 (Pick/Ban) 與天梯勝率統計
+                基於級別賽對戰數據、環境禁用率 (Pick/Ban) 與天梯勝率統計
               </p>
             </div>
           </div>

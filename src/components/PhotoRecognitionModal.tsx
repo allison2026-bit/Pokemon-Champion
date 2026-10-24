@@ -124,7 +124,7 @@ export const PhotoRecognitionModal: React.FC<PhotoRecognitionModalProps> = ({
     setRecognitionResult({
       pokemonNameZh: matched?.nameZh || expectedName,
       pokemonNameEn: matched?.nameEn || '',
-      form: '官方 Champions 級別型態',
+      form: 'Champion 級別型態',
       confidence: 0.98,
       visualFeatures: `展示範例圖片：${expectedName}，具備高階賽事競技數值。`,
       matchedPokemon: matched,

@@ -25,11 +25,11 @@ export const Header: React.FC<HeaderProps> = ({
           <div>
             <div className="flex items-center gap-2">
               <span className="text-base sm:text-lg font-black tracking-tight text-slate-900 whitespace-nowrap">
-                POKÉMON <span className="text-amber-600">CHAMPIONS</span>
+                <span className="text-amber-600">CHAMPION</span>
               </span>
             </div>
             <p className="text-[11px] text-slate-500 font-medium hidden sm:block">
-              官方級別賽對戰分析 · ① 照片辨識對方(6隻) ② 建議我方對應(6隻) ③ 戰術分析
+              級別賽對戰分析 · ① 照片辨識對方(6隻) ② 建議我方對應(6隻) ③ 戰術分析
             </p>
           </div>
         </div>

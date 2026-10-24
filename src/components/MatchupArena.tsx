@@ -82,10 +82,10 @@ export const MatchupArena: React.FC<MatchupArenaProps> = ({
           <div>
             <div className="flex items-center gap-2 text-xs font-extrabold text-amber-600 uppercase tracking-wider mb-1 font-mono">
               <Trophy className="w-4 h-4 text-amber-500" />
-              Pokémon Champions · 級別對戰對位推演
+              Champion · 級別對戰對位推演
             </div>
             <h1 className="text-2xl font-black text-slate-900 tracking-tight">
-              Champions 對戰組合與勝率分析
+              Champion 對戰組合與勝率分析
             </h1>
           </div>
 
@@ -100,7 +100,7 @@ export const MatchupArena: React.FC<MatchupArenaProps> = ({
                     : 'text-slate-600 hover:text-slate-900'
                 }`}
               >
-                雙打對戰 (VGC 官方規則)
+                雙打對戰 (VGC 級別賽規則)
               </button>
               <button
                 onClick={() => onChangeFormat('Single')}
@@ -416,7 +416,7 @@ export const MatchupArena: React.FC<MatchupArenaProps> = ({
         <div className="p-6 bg-white border border-slate-200 rounded-2xl shadow-sm space-y-4">
           <h3 className="text-sm font-black text-slate-900 uppercase tracking-wider flex items-center gap-2 font-mono">
             <CheckCircle className="w-4 h-4 text-emerald-600" />
-            Champions 官方級對戰作戰指令 (Battle Directives)
+            Champion 級別對戰作戰指令 (Battle Directives)
           </h3>
           <div className="space-y-3">
             {matchupResult.tacticalDirectives.map((tip, idx) => (

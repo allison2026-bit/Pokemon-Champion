@@ -557,7 +557,7 @@ export const POKEMON_LIST: Pokemon[] = RAW_ROSTER.map((raw) => {
   const primaryAbility = {
     nameZh: raw.abilityZh || (isMega ? '超級霸氣' : '特化競技特性'),
     nameEn: raw.abilityEn || 'Competitive Trait',
-    description: raw.abilityDesc || '官方級別賽對戰核心特性。',
+    description: raw.abilityDesc || '級別賽對戰核心特性。',
   };
 
   const build: CompetitiveBuild = {
