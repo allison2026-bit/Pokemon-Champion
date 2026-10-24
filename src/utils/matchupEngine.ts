@@ -45,6 +45,35 @@ export function getMaxOffensiveMultiplier(attackerTypes: PokemonType[], defender
   return maxMult;
 }
 
+export const ALL_18_TYPES: PokemonType[] = [
+  'Normal', 'Fire', 'Water', 'Grass', 'Electric', 'Ice',
+  'Fighting', 'Poison', 'Ground', 'Flying', 'Psychic', 'Bug',
+  'Rock', 'Ghost', 'Dragon', 'Steel', 'Dark', 'Fairy',
+];
+
+export function calculateTypeRelations(defenderTypes: PokemonType[]): {
+  weaknesses: PokemonType[];
+  resistances: PokemonType[];
+  immunities: PokemonType[];
+} {
+  const weaknesses: PokemonType[] = [];
+  const resistances: PokemonType[] = [];
+  const immunities: PokemonType[] = [];
+
+  for (const atk of ALL_18_TYPES) {
+    const mult = getTypeMultiplier(atk, defenderTypes);
+    if (mult === 0) {
+      immunities.push(atk);
+    } else if (mult > 1.0) {
+      weaknesses.push(atk);
+    } else if (mult < 1.0) {
+      resistances.push(atk);
+    }
+  }
+
+  return { weaknesses, resistances, immunities };
+}
+
 export function calculateChampionsMatchup(
   myPokemon: Pokemon,
   opponentPokemon: Pokemon,

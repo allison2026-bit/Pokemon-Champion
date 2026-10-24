@@ -100,7 +100,7 @@ export const PokemonSelectorModal: React.FC<PokemonSelectorModalProps> = ({
                 {title}
               </h2>
               <p className="text-xs text-slate-500 mt-0.5">
-                從 52POKE Champions 官方級別賽名單挑選參賽寶可夢
+                從 Victor Poke Champions 官方級別賽名單挑選參賽寶可夢
               </p>
             </div>
           </div>
