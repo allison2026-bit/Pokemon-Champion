@@ -257,13 +257,13 @@ export const VoiceAssistantModal: React.FC<VoiceAssistantModalProps> = ({
             </div>
           </div>
 
-          {/* Section B: Speech Synthesis (語音朗讀) */}
+          {/* Section B: Speech Synthesis (女聲朗讀) */}
           <div className="p-5 rounded-2xl bg-blue-50/50 border border-blue-200 space-y-3">
             <div className="flex items-center justify-between">
               <div className="flex items-center gap-2">
                 <Volume2 className="w-4 h-4 text-blue-600" />
                 <span className="text-xs font-black text-blue-900 uppercase font-mono">
-                  戰術語音朗讀播報 (Voice Read Aloud)
+                  女聲戰術語音朗讀 (Female Voice Read Aloud)
                 </span>
               </div>
               <button
@@ -282,14 +282,14 @@ export const VoiceAssistantModal: React.FC<VoiceAssistantModalProps> = ({
                 ) : (
                   <>
                     <Play className="w-3.5 h-3.5 fill-current" />
-                    開始朗讀對局戰術
+                    開始女聲朗讀戰術
                   </>
                 )}
               </button>
             </div>
 
             <p className="text-xs text-slate-600 leading-relaxed bg-white p-3 rounded-xl border border-blue-100 font-medium">
-              {currentSpeechText || '點擊上方按鈕，即時朗讀當前對局勝率分析、速度線先手權及推薦出招策略。'}
+              {currentSpeechText || '點擊上方按鈕，以自然優雅女聲即時朗讀當前對局勝率分析、速度線先手權及推薦出招策略。'}
             </p>
           </div>
         </div>

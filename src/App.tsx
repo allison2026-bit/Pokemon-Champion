@@ -5,77 +5,262 @@
 
 import React, { useState, useMemo, useEffect, useRef } from 'react';
 import { POKEMON_LIST } from './data/pokemonData';
-import { Pokemon, BattleFormat, PokemonType, ChampionMove } from './types/pokemon';
-import { calculateChampionsMatchup } from './utils/matchupEngine';
+import { Pokemon, PokemonType } from './types/pokemon';
 import { Header } from './components/Header';
 import { PokemonSelectorModal } from './components/PokemonSelectorModal';
-import { PhotoRecognitionModal } from './components/PhotoRecognitionModal';
 import { VoiceAssistantModal } from './components/VoiceAssistantModal';
 import {
-  ArrowLeftRight,
+  recommendCounterTeam,
+  calculate6v6Matrix,
+  analyze6v6Tactics,
+  RecommendedTeamMember,
+} from './utils/teamBuilderEngine';
+import {
+  Camera,
+  Upload,
+  Crown,
   Shield,
   Zap,
-  Sparkles,
-  Trophy,
-  Crown,
-  Gauge,
-  Crosshair,
-  Flame,
-  CheckCircle2,
-  AlertTriangle,
-  Camera,
-  Mic,
   Volume2,
-  VolumeX,
-  Play,
   Square,
+  Sparkles,
   ChevronDown,
+  Layers,
+  CheckCircle2,
+  AlertCircle,
+  RefreshCw,
+  Swords,
+  Flame,
+  Target,
+  Trophy,
 } from 'lucide-react';
 
+// Preset opponent team templates for 1-click test
+const PRESET_OPPONENT_TEAMS = [
+  {
+    name: 'WCS 冠軍核心隊',
+    tag: '主流頂尖',
+    ids: ['flutter_mane', 'incineroar', 'chi_yu', 'ogerpon_water', 'terapagos', 'metagross'],
+  },
+  {
+    name: '晴天古代猛攻隊',
+    tag: '極限物攻',
+    ids: ['charizard', 'gouging_fire', 'chi_yu', 'landorus_t', 'raging_bolt', 'lopunny'],
+  },
+  {
+    name: 'MEGA 強權平衡隊',
+    tag: '種族極限',
+    ids: ['mega_metagross', 'mega_dragonite', 'mega_blastoise', 'snorlax', 'mega_gengar', 'garchomp'],
+  },
+  {
+    name: '極限雨天快攻隊',
+    tag: '氣候體系',
+    ids: ['pelipper', 'swampert', 'palafin', 'ampharos', 'scizor', 'milotic'],
+  },
+];
+
 export default function App() {
-  // Champions default matchup: Incineroar (熾焰咆哮虎) vs Flutter Mane (振翼髮)
-  const [myPokemon, setMyPokemon] = useState<Pokemon>(() => {
-    return POKEMON_LIST.find((p) => p.id === 'incineroar') || POKEMON_LIST[0];
+  // ==========================================================
+  // STEP 1 STATE: Opponent Team (6 Pokémon)
+  // ==========================================================
+  const [opponentTeam, setOpponentTeam] = useState<Pokemon[]>(() => {
+    return [
+      POKEMON_LIST.find((p) => p.id === 'flutter_mane') || POKEMON_LIST[0],
+      POKEMON_LIST.find((p) => p.id === 'incineroar') || POKEMON_LIST[1],
+      POKEMON_LIST.find((p) => p.id === 'chi_yu') || POKEMON_LIST[2],
+      POKEMON_LIST.find((p) => p.id === 'ogerpon_water') || POKEMON_LIST[3],
+      POKEMON_LIST.find((p) => p.id === 'terapagos') || POKEMON_LIST[4],
+      POKEMON_LIST.find((p) => p.id === 'metagross') || POKEMON_LIST[5],
+    ];
   });
 
-  const [opponentPokemon, setOpponentPokemon] = useState<Pokemon>(() => {
-    return POKEMON_LIST.find((p) => p.id === 'flutter_mane') || POKEMON_LIST[1];
-  });
+  // Photo recognition states
+  const [isRecognizing, setIsRecognizing] = useState(false);
+  const [recognitionStatus, setRecognitionStatus] = useState<string | null>(null);
+  const [uploadedPreview, setUploadedPreview] = useState<string | null>(null);
 
-  const [currentFormat, setCurrentFormat] = useState<BattleFormat>('Double');
+  // Manual replacement modal state
+  const [editingOpponentIndex, setEditingOpponentIndex] = useState<number | null>(null);
+  const [editingMyIndex, setEditingMyIndex] = useState<number | null>(null);
 
   // Modals state
-  const [isMySelectorOpen, setIsMySelectorOpen] = useState(false);
-  const [isOpponentSelectorOpen, setIsOpponentSelectorOpen] = useState(false);
-  const [isPhotoModalOpen, setIsPhotoModalOpen] = useState(false);
   const [isVoiceModalOpen, setIsVoiceModalOpen] = useState(false);
 
-  // Speech Synthesis state (語音朗讀)
-  const [isSpeaking, setIsSpeaking] = useState(false);
-  const synthRef = useRef<SpeechSynthesis | null>(null);
+  // Custom overrides for My Team if user manually edits any slot
+  const [myCustomOverrides, setMyCustomOverrides] = useState<(Pokemon | null)[]>([
+    null, null, null, null, null, null,
+  ]);
 
+  // AI 6v6 deep coach analysis state
+  const [isGeneratingAi, setIsGeneratingAi] = useState(false);
+  const [aiAnalysisText, setAiAnalysisText] = useState<string | null>(null);
+
+  // Active tactical sub-tab
+  const [activeTacticsTab, setActiveTacticsTab] = useState<'matrix' | 'speed' | 'tera' | 'ai'>('matrix');
+
+  // Matrix cell selected for details
+  const [selectedMatrixCell, setSelectedMatrixCell] = useState<{
+    myPokemon: Pokemon;
+    oppPokemon: Pokemon;
+    myOff: number;
+    oppOff: number;
+    tip: string;
+  } | null>(null);
+
+  // Speech Synthesis state (女聲朗讀)
+  const [isSpeaking, setIsSpeaking] = useState(false);
+  const [voices, setVoices] = useState<SpeechSynthesisVoice[]>([]);
+  const synthRef = useRef<SpeechSynthesis | null>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const cameraInputRef = useRef<HTMLInputElement>(null);
+
+  // Initialize Speech Synthesis & Voices
   useEffect(() => {
     if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
       synthRef.current = window.speechSynthesis;
+      const updateVoices = () => {
+        const list = window.speechSynthesis.getVoices();
+        if (list && list.length > 0) {
+          setVoices(list);
+        }
+      };
+      updateVoices();
+      window.speechSynthesis.onvoiceschanged = updateVoices;
+      return () => {
+        if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
+          window.speechSynthesis.onvoiceschanged = null;
+        }
+      };
     }
   }, []);
 
-  // Dynamic calculated matchup
-  const matchupResult = useMemo(() => {
-    return calculateChampionsMatchup(myPokemon, opponentPokemon, currentFormat);
-  }, [myPokemon, opponentPokemon, currentFormat]);
+  // ==========================================================
+  // STEP 2 CALCULATION: Recommend Our Counter Team (6 Pokémon)
+  // ==========================================================
+  const rawRecommendedMembers = useMemo(() => {
+    return recommendCounterTeam(opponentTeam);
+  }, [opponentTeam]);
 
-  const myBuild = myPokemon.builds[0];
-  const oppBuild = opponentPokemon.builds[0];
-  const opponentWinRate = Math.round((100 - matchupResult.winRate) * 10) / 10;
+  // Combine recommendations with any manual overrides the player made
+  const myTeamMembers: RecommendedTeamMember[] = useMemo(() => {
+    return rawRecommendedMembers.map((rec, index) => {
+      const override = myCustomOverrides[index];
+      if (!override) return rec;
 
-  // Generate spoken text script for TTS
-  const speechBriefingText = useMemo(() => {
-    const moveNames = myBuild?.moves ? myBuild.moves.map((m) => m.nameZh).join('、') : '主力技能';
-    return `我方【${myPokemon.nameZh}】對戰【${opponentPokemon.nameZh}】。對位勝率預測為百分之${matchupResult.winRate}，戰局判定為${matchupResult.advantageTier}。我方基準速度為${myPokemon.baseStats.speed}，${matchupResult.speedAdvantage.summary}。推薦攜帶道具【${myBuild?.heldItem.nameZh}】，推薦太晶化為【${myBuild?.teraType}】屬性。推薦 4 招技能出招：${moveNames}。對局核心戰術：${matchupResult.recommendedTeraAdaptation.rationale}`;
-  }, [myPokemon, opponentPokemon, matchupResult, myBuild]);
+      return {
+        ...rec,
+        pokemon: override,
+        counterRationale: `玩家手動微調替換：【${override.nameZh}】（${override.tier.split(' ')[0]}，種族值 ${override.baseStats.total}）。`,
+        keyMove: override.builds[0]?.moves[0]?.nameZh || '主力攻擊',
+        speedCompare: `速 ${override.baseStats.speed}`,
+      };
+    });
+  }, [rawRecommendedMembers, myCustomOverrides]);
 
-  // Handle Speech Synthesis Toggle
+  const myTeam = useMemo(() => myTeamMembers.map((m) => m.pokemon), [myTeamMembers]);
+
+  // ==========================================================
+  // STEP 3 CALCULATION: 6v6 Strategic Tactics Analysis
+  // ==========================================================
+  const tacticsAnalysis = useMemo(() => {
+    return analyze6v6Tactics(myTeamMembers, opponentTeam);
+  }, [myTeamMembers, opponentTeam]);
+
+  const matrixCells = useMemo(() => {
+    return calculate6v6Matrix(myTeam, opponentTeam);
+  }, [myTeam, opponentTeam]);
+
+  // Find Pokémon helper
+  const findPokemonByName = (nameZh?: string, nameEn?: string): Pokemon | undefined => {
+    if (!nameZh && !nameEn) return undefined;
+    const cleanZh = (nameZh || '').trim().toLowerCase();
+    const cleanEn = (nameEn || '').trim().toLowerCase();
+
+    return (
+      POKEMON_LIST.find((p) => p.nameZh.toLowerCase() === cleanZh) ||
+      POKEMON_LIST.find((p) => p.nameEn.toLowerCase() === cleanEn) ||
+      POKEMON_LIST.find((p) => p.nameZh.includes(cleanZh) || cleanZh.includes(p.nameZh)) ||
+      POKEMON_LIST.find((p) => p.nameEn.toLowerCase().includes(cleanEn) || cleanEn.includes(p.nameEn.toLowerCase()))
+    );
+  };
+
+  // Handle Photo Recognition of Opponent Team (6 Pokémon)
+  const handleProcessImage = async (file: File) => {
+    if (!file.type.startsWith('image/')) {
+      alert('請上傳有效的圖片檔案（PNG, JPG, WEBP）。');
+      return;
+    }
+
+    const reader = new FileReader();
+    reader.onload = async (e) => {
+      const base64 = e.target?.result as string;
+      setUploadedPreview(base64);
+      setIsRecognizing(true);
+      setRecognitionStatus('AI 正在精準辨識圖片中的敵方 6 隻寶可夢...');
+
+      try {
+        const resp = await fetch('/api/vision/recognize-team', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ image: base64 }),
+        });
+
+        const data = await resp.json();
+        if (data.success && data.data?.pokemonList?.length > 0) {
+          const matchedList: Pokemon[] = [];
+          data.data.pokemonList.forEach((item: any) => {
+            const match = findPokemonByName(item.nameZh, item.nameEn);
+            if (match && !matchedList.some((m) => m.id === match.id)) {
+              matchedList.push(match);
+            }
+          });
+
+          if (matchedList.length > 0) {
+            const newTeam = [...matchedList];
+            // If fewer than 6, supplement from default roster
+            let fillIdx = 0;
+            while (newTeam.length < 6 && fillIdx < POKEMON_LIST.length) {
+              const cand = POKEMON_LIST[fillIdx];
+              if (!newTeam.some((t) => t.id === cand.id)) {
+                newTeam.push(cand);
+              }
+              fillIdx++;
+            }
+            setOpponentTeam(newTeam);
+            // Reset manual overrides so system re-evaluates fresh counter team
+            setMyCustomOverrides([null, null, null, null, null, null]);
+            setRecognitionStatus(
+              `✅ 辨識成功！偵測到：${matchedList.map((m) => m.nameZh).join('、')}（${data.data.teamArchetype || '對戰陣容'}）`
+            );
+          } else {
+            setRecognitionStatus('未能在照片中精確匹配到圖鑑寶可夢，已維持目前陣容。');
+          }
+        } else {
+          setRecognitionStatus('照片辨識未取得具體陣容資料，請確認照片清晰度。');
+        }
+      } catch (err: any) {
+        setRecognitionStatus('辨識連線異常，請手動調整陣容或重試。');
+      } finally {
+        setIsRecognizing(false);
+      }
+    };
+    reader.readAsDataURL(file);
+  };
+
+  // Load preset opponent template
+  const handleLoadPreset = (preset: (typeof PRESET_OPPONENT_TEAMS)[0]) => {
+    const list = preset.ids
+      .map((id) => POKEMON_LIST.find((p) => p.id === id))
+      .filter((p): p is Pokemon => p !== undefined);
+    if (list.length === 6) {
+      setOpponentTeam(list);
+      setMyCustomOverrides([null, null, null, null, null, null]);
+      setUploadedPreview(null);
+      setRecognitionStatus(`已載入經典範本：【${preset.name}】`);
+    }
+  };
+
+  // Female voice read aloud
   const handleToggleSpeech = () => {
     if (!synthRef.current) {
       alert('您的瀏覽器未支援語音朗讀功能。');
@@ -89,67 +274,93 @@ export default function App() {
     }
 
     synthRef.current.cancel();
-    const utterance = new SpeechSynthesisUtterance(speechBriefingText);
+    const utterance = new SpeechSynthesisUtterance(tacticsAnalysis.speechSummary);
     utterance.lang = 'zh-TW';
-    utterance.rate = 1.05;
-    utterance.pitch = 1.0;
+    utterance.rate = 1.0;
+    utterance.pitch = 1.2; // 女生自然甜美音調
 
-    // Try selecting a good traditional Chinese voice if available
-    const voices = synthRef.current.getVoices();
-    const zhVoice = voices.find((v) => v.lang.includes('zh-TW') || v.lang.includes('zh'));
-    if (zhVoice) {
-      utterance.voice = zhVoice;
+    const availableVoices = voices.length > 0 ? voices : (synthRef.current.getVoices() || []);
+    const isFemaleName = (name: string) => {
+      const lower = name.toLowerCase();
+      return (
+        lower.includes('female') ||
+        lower.includes('girl') ||
+        lower.includes('woman') ||
+        lower.includes('hsiaochen') ||
+        lower.includes('xiaoxiao') ||
+        lower.includes('xiaoyi') ||
+        lower.includes('mei-jia') ||
+        lower.includes('ting-ting') ||
+        lower.includes('zhiyu') ||
+        lower.includes('hanhan') ||
+        lower.includes('yaoyao') ||
+        lower.includes('yating') ||
+        lower.includes('sin-ji') ||
+        lower.includes('huihui') ||
+        name.includes('女') ||
+        name.includes('國語（臺灣）') ||
+        name.includes('美佳') ||
+        name.includes('曉') ||
+        name.includes('婷')
+      );
+    };
+
+    const zhFemaleVoice = availableVoices.find(
+      (v) => (v.lang.includes('zh') || v.lang.includes('cmn')) && isFemaleName(v.name)
+    );
+    const twVoice = availableVoices.find(
+      (v) => v.lang.includes('zh-TW') || v.name.includes('Taiwan') || v.name.includes('國語')
+    );
+    const anyZhVoice = availableVoices.find((v) => v.lang.includes('zh'));
+    const anyFemaleVoice = availableVoices.find((v) => isFemaleName(v.name));
+
+    const selectedVoice = zhFemaleVoice || twVoice || anyZhVoice || anyFemaleVoice;
+    if (selectedVoice) {
+      utterance.voice = selectedVoice;
     }
 
-    utterance.onend = () => {
-      setIsSpeaking(false);
-    };
-
-    utterance.onerror = () => {
-      setIsSpeaking(false);
-    };
+    utterance.onend = () => setIsSpeaking(false);
+    utterance.onerror = () => setIsSpeaking(false);
 
     synthRef.current.speak(utterance);
     setIsSpeaking(true);
   };
 
-  // Swap sides
-  const handleSwapPositions = () => {
-    const temp = myPokemon;
-    setMyPokemon(opponentPokemon);
-    setOpponentPokemon(temp);
-  };
-
-  // Pick random matchup
-  const handleRandomMatchup = () => {
-    const list = [...POKEMON_LIST];
-    const idx1 = Math.floor(Math.random() * list.length);
-    let idx2 = Math.floor(Math.random() * list.length);
-    while (idx2 === idx1) {
-      idx2 = Math.floor(Math.random() * list.length);
+  // Live Gemini AI 6v6 Strategic Coach Analysis
+  const handleGetAiAnalysis = async () => {
+    setIsGeneratingAi(true);
+    setActiveTacticsTab('ai');
+    try {
+      const resp = await fetch('/api/tactics/gemini-team-analysis', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          myTeam: myTeamMembers.map((m) => ({
+            nameZh: m.pokemon.nameZh,
+            types: m.pokemon.types,
+            baseStats: m.pokemon.baseStats,
+            roleTitle: m.roleTitle,
+          })),
+          opponentTeam: opponentTeam.map((p) => ({
+            nameZh: p.nameZh,
+            types: p.types,
+            baseStats: p.baseStats,
+            weaknesses: p.weaknesses,
+          })),
+        }),
+      });
+      const data = await resp.json();
+      if (data.analysis) {
+        setAiAnalysisText(data.analysis);
+      }
+    } catch (err: any) {
+      console.error('AI team analysis failed:', err);
+    } finally {
+      setIsGeneratingAi(false);
     }
-    setMyPokemon(list[idx1]);
-    setOpponentPokemon(list[idx2]);
   };
 
-  // Quick meta picks for rapid 1-click test
-  const quickMetaList = useMemo(() => {
-    return [
-      'incineroar',
-      'flutter_mane',
-      'zacian',
-      'dragonite',
-      'chien_pao',
-      'gholdengo',
-      'urshifu_rapid',
-      'landorus_t',
-      'ogerpon_water',
-      'miraidon',
-    ]
-      .map((id) => POKEMON_LIST.find((p) => p.id === id))
-      .filter((p): p is Pokemon => p !== undefined);
-  }, []);
-
+  // Type Badges styling
   const getTypeBadge = (type: PokemonType) => {
     const colors: Record<PokemonType, string> = {
       Normal: 'bg-slate-100 text-slate-700 border-slate-300',
@@ -158,693 +369,817 @@ export default function App() {
       Grass: 'bg-emerald-100 text-emerald-800 border-emerald-200',
       Electric: 'bg-yellow-100 text-yellow-800 border-yellow-300',
       Ice: 'bg-cyan-100 text-cyan-800 border-cyan-200',
-      Fighting: 'bg-amber-100 text-amber-900 border-amber-300',
+      Fighting: 'bg-red-100 text-red-800 border-red-200',
       Poison: 'bg-purple-100 text-purple-800 border-purple-200',
       Ground: 'bg-amber-100 text-amber-800 border-amber-300',
       Flying: 'bg-sky-100 text-sky-800 border-sky-200',
       Psychic: 'bg-pink-100 text-pink-800 border-pink-200',
-      Bug: 'bg-lime-100 text-lime-800 border-lime-300',
+      Bug: 'bg-lime-100 text-lime-800 border-lime-200',
       Rock: 'bg-stone-100 text-stone-800 border-stone-300',
-      Ghost: 'bg-indigo-100 text-indigo-800 border-indigo-200',
-      Dragon: 'bg-violet-100 text-violet-800 border-violet-300',
-      Steel: 'bg-zinc-100 text-zinc-800 border-zinc-300',
-      Dark: 'bg-neutral-800 text-white border-neutral-700',
+      Ghost: 'bg-violet-100 text-violet-800 border-violet-200',
+      Dragon: 'bg-indigo-100 text-indigo-800 border-indigo-200',
+      Steel: 'bg-zinc-200 text-zinc-800 border-zinc-300',
+      Dark: 'bg-neutral-800 text-neutral-100 border-neutral-700',
       Fairy: 'bg-rose-100 text-rose-800 border-rose-200',
     };
+
+    const typeZhMap: Record<PokemonType, string> = {
+      Normal: '一般', Fire: '火', Water: '水', Grass: '草', Electric: '電', Ice: '冰',
+      Fighting: '格鬥', Poison: '毒', Ground: '地面', Flying: '飛行', Psychic: '超能力', Bug: '蟲',
+      Rock: '岩石', Ghost: '幽靈', Dragon: '龍', Steel: '鋼', Dark: '惡', Fairy: '妖精',
+    };
+
     return (
       <span
         key={type}
-        className={`px-2 py-0.5 rounded text-xs font-bold border ${colors[type] || 'bg-slate-100 text-slate-700'}`}
+        className={`px-2 py-0.5 rounded-md text-xs font-bold border ${colors[type] || 'bg-slate-100 text-slate-800'}`}
       >
-        {type}
+        {typeZhMap[type] || type}
       </span>
     );
   };
 
-  const getCategoryBadge = (category: 'Physical' | 'Special' | 'Status') => {
-    switch (category) {
-      case 'Physical':
-        return (
-          <span className="px-1.5 py-0.5 rounded text-[10px] font-black bg-rose-50 text-rose-700 border border-rose-200 font-mono">
-            物理
-          </span>
-        );
-      case 'Special':
-        return (
-          <span className="px-1.5 py-0.5 rounded text-[10px] font-black bg-indigo-50 text-indigo-700 border border-indigo-200 font-mono">
-            特殊
-          </span>
-        );
-      case 'Status':
-        return (
-          <span className="px-1.5 py-0.5 rounded text-[10px] font-black bg-slate-100 text-slate-700 border border-slate-300 font-mono">
-            變化
-          </span>
-        );
-    }
-  };
-
-  const getAdvantageBadge = (tier: string) => {
-    if (tier.includes('絕對優勢')) return 'text-emerald-700 bg-emerald-50 border-emerald-300';
-    if (tier.includes('屬性佔優')) return 'text-teal-700 bg-teal-50 border-teal-300';
-    if (tier.includes('勢均力敵')) return 'text-amber-700 bg-amber-50 border-amber-300';
-    if (tier.includes('對位劣勢')) return 'text-orange-700 bg-orange-50 border-orange-300';
-    return 'text-rose-700 bg-rose-50 border-rose-300';
-  };
-
   return (
     <div className="min-h-screen bg-slate-50 text-slate-900 flex flex-col font-sans selection:bg-amber-400 selection:text-slate-900">
-      {/* Streamlined Header */}
+      {/* Header */}
       <Header
-        format={currentFormat}
-        onChangeFormat={setCurrentFormat}
-        onRandomMatchup={handleRandomMatchup}
         onOpenVoiceModal={() => setIsVoiceModalOpen(true)}
-        onOpenPhotoModal={() => setIsPhotoModalOpen(true)}
         onToggleSpeech={handleToggleSpeech}
         isSpeaking={isSpeaking}
       />
 
-      {/* Main Single-Page Container */}
-      <main className="flex-1 max-w-7xl w-full mx-auto px-4 sm:px-6 py-6 sm:py-8 space-y-6 sm:space-y-8">
+      {/* Main Container */}
+      <main className="flex-1 max-w-7xl w-full mx-auto px-4 sm:px-6 py-6 sm:py-8 space-y-8">
         {/* =========================================================
-            SECTION 1: FIGHTER SELECTOR (我方 vs 對手)
+            WORKFLOW STEP INDICATOR BANNER
         ========================================================= */}
-        <section className="bg-white rounded-3xl border border-slate-200 p-5 sm:p-6 shadow-sm">
-          <div className="grid grid-cols-1 lg:grid-cols-11 gap-4 sm:gap-6 items-center">
-            {/* Left: My Pokemon Card */}
-            <div className="lg:col-span-5 p-4 sm:p-5 rounded-2xl bg-blue-50/40 border border-blue-200/80 space-y-3">
-              <div className="flex items-center justify-between">
-                <div className="flex items-center gap-2">
-                  <span className="w-2.5 h-2.5 rounded-full bg-blue-600" />
-                  <span className="text-xs font-black text-blue-900 tracking-wider uppercase font-mono">
-                    我方寶可夢 (My Pokémon)
-                  </span>
-                </div>
-                <div className="flex items-center gap-1.5">
-                  <button
-                    onClick={() => setIsVoiceModalOpen(true)}
-                    className="flex items-center gap-1 px-2.5 py-1.5 rounded-xl bg-white hover:bg-amber-50 text-amber-800 text-xs font-bold border border-amber-300 transition-all shadow-2xs cursor-pointer"
-                    title="語音辨識指令"
-                  >
-                    <Mic className="w-3.5 h-3.5 text-amber-600" />
-                    <span className="hidden sm:inline">語音</span>
-                  </button>
-                  <button
-                    onClick={() => setIsMySelectorOpen(true)}
-                    className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-white hover:bg-blue-50 text-blue-800 text-xs font-bold border border-blue-300 transition-all shadow-2xs cursor-pointer"
-                  >
-                    更換寶可夢
-                    <ChevronDown className="w-3.5 h-3.5 text-blue-600" />
-                  </button>
-                </div>
+        <div className="bg-white rounded-2xl border border-slate-200 p-4 shadow-2xs">
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+            <div className="flex items-center gap-3 p-3 rounded-xl bg-rose-50/70 border border-rose-200">
+              <div className="w-8 h-8 rounded-lg bg-rose-600 text-white font-black flex items-center justify-center text-sm shadow-xs">
+                1
               </div>
-
-              <div className="flex items-center gap-4">
-                <div className="relative w-20 h-20 sm:w-24 sm:h-24 bg-white rounded-2xl border border-blue-200 p-1.5 flex items-center justify-center shrink-0 shadow-2xs">
-                  <img
-                    src={myPokemon.officialArtUrl}
-                    alt={myPokemon.nameZh}
-                    referrerPolicy="no-referrer"
-                    className="w-full h-full object-contain filter drop-shadow-xs"
-                  />
-                  <span className="absolute bottom-1 right-1 text-[9px] font-mono font-black px-1.5 py-0.5 rounded bg-blue-600 text-white">
-                    #{myPokemon.pokedexNumber}
-                  </span>
+              <div>
+                <div className="text-xs font-black text-rose-900 uppercase font-mono tracking-wider">
+                  步驟 (1) 照片辨識
                 </div>
-
-                <div className="min-w-0 flex-1 space-y-1">
-                  <div className="flex items-baseline gap-2">
-                    <h2 className="text-xl sm:text-2xl font-black text-slate-900 truncate">
-                      {myPokemon.nameZh}
-                    </h2>
-                    <span className="text-xs text-slate-500 font-mono truncate">
-                      {myPokemon.nameEn}
-                    </span>
-                  </div>
-
-                  <div className="flex flex-wrap items-center gap-1.5">
-                    {myPokemon.types.map(getTypeBadge)}
-                    <span className="text-[10px] font-black px-2 py-0.5 rounded bg-amber-100 text-amber-800 border border-amber-200 font-mono">
-                      {myPokemon.tier.split(' ')[0]}
-                    </span>
-                  </div>
-
-                  <div className="text-xs text-slate-600 pt-0.5">
-                    速度 <strong className="text-amber-700 font-mono font-black">{myPokemon.baseStats.speed}</strong> · 總種族值 <strong className="text-slate-800 font-mono">{myPokemon.baseStats.total}</strong> · 特性【{myPokemon.primaryAbility.nameZh}】
-                  </div>
+                <div className="text-sm font-bold text-slate-800">
+                  對方寶可夢（6隻陣容）
                 </div>
-              </div>
-
-              {/* Quick Picks for My Pokemon */}
-              <div className="pt-2 border-t border-blue-200/60 flex items-center gap-1.5 overflow-x-auto text-[11px]">
-                <span className="text-slate-400 font-bold shrink-0 font-mono">熱門速選:</span>
-                {quickMetaList.map((p) => (
-                  <button
-                    key={p.id}
-                    onClick={() => setMyPokemon(p)}
-                    className={`px-2 py-0.5 rounded-lg font-bold whitespace-nowrap transition-all cursor-pointer ${
-                      myPokemon.id === p.id
-                        ? 'bg-blue-600 text-white shadow-2xs'
-                        : 'bg-white text-slate-600 hover:bg-blue-100 border border-blue-200'
-                    }`}
-                  >
-                    {p.nameZh}
-                  </button>
-                ))}
               </div>
             </div>
 
-            {/* Middle: Swap Button */}
-            <div className="lg:col-span-1 flex justify-center">
-              <button
-                onClick={handleSwapPositions}
-                className="w-11 h-11 rounded-2xl bg-slate-100 hover:bg-amber-100 border border-slate-200 hover:border-amber-300 flex items-center justify-center text-slate-700 hover:text-amber-700 transition-all active:scale-95 shadow-2xs cursor-pointer"
-                title="互換雙方位置"
-              >
-                <ArrowLeftRight className="w-5 h-5" />
-              </button>
+            <div className="flex items-center gap-3 p-3 rounded-xl bg-blue-50/70 border border-blue-200">
+              <div className="w-8 h-8 rounded-lg bg-blue-600 text-white font-black flex items-center justify-center text-sm shadow-xs">
+                2
+              </div>
+              <div>
+                <div className="text-xs font-black text-blue-900 uppercase font-mono tracking-wider">
+                  步驟 (2) 智能演算
+                </div>
+                <div className="text-sm font-bold text-slate-800">
+                  建議我方對應寶可夢（6隻）
+                </div>
+              </div>
             </div>
 
-            {/* Right: Opponent Pokemon Card */}
-            <div className="lg:col-span-5 p-4 sm:p-5 rounded-2xl bg-rose-50/40 border border-rose-200/80 space-y-3">
-              <div className="flex items-center justify-between">
-                <div className="flex items-center gap-2">
-                  <span className="w-2.5 h-2.5 rounded-full bg-rose-600" />
-                  <span className="text-xs font-black text-rose-900 tracking-wider uppercase font-mono">
-                    敵方寶可夢 (Opponent Pokémon)
-                  </span>
-                </div>
-                <div className="flex items-center gap-1.5">
-                  {/* Photo Recognition Button */}
-                  <button
-                    onClick={() => setIsPhotoModalOpen(true)}
-                    className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl bg-white hover:bg-rose-100 text-rose-800 text-xs font-bold border border-rose-300 transition-all shadow-2xs cursor-pointer"
-                    title="拍照或上傳截圖辨識對手角色"
-                  >
-                    <Camera className="w-3.5 h-3.5 text-rose-600" />
-                    <span>照片辨識</span>
-                  </button>
-
-                  <button
-                    onClick={() => setIsOpponentSelectorOpen(true)}
-                    className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-white hover:bg-rose-50 text-rose-800 text-xs font-bold border border-rose-300 transition-all shadow-2xs cursor-pointer"
-                  >
-                    更換
-                    <ChevronDown className="w-3.5 h-3.5 text-rose-600" />
-                  </button>
-                </div>
+            <div className="flex items-center gap-3 p-3 rounded-xl bg-emerald-50/70 border border-emerald-200">
+              <div className="w-8 h-8 rounded-lg bg-emerald-600 text-white font-black flex items-center justify-center text-sm shadow-xs">
+                3
               </div>
-
-              <div className="flex items-center gap-4">
-                <div className="relative w-20 h-20 sm:w-24 sm:h-24 bg-white rounded-2xl border border-rose-200 p-1.5 flex items-center justify-center shrink-0 shadow-2xs">
-                  <img
-                    src={opponentPokemon.officialArtUrl}
-                    alt={opponentPokemon.nameZh}
-                    referrerPolicy="no-referrer"
-                    className="w-full h-full object-contain filter drop-shadow-xs"
-                  />
-                  <span className="absolute bottom-1 right-1 text-[9px] font-mono font-black px-1.5 py-0.5 rounded bg-rose-600 text-white">
-                    #{opponentPokemon.pokedexNumber}
-                  </span>
+              <div>
+                <div className="text-xs font-black text-emerald-900 uppercase font-mono tracking-wider">
+                  步驟 (3) 核心復盤
                 </div>
-
-                <div className="min-w-0 flex-1 space-y-1">
-                  <div className="flex items-baseline gap-2">
-                    <h2 className="text-xl sm:text-2xl font-black text-slate-900 truncate">
-                      {opponentPokemon.nameZh}
-                    </h2>
-                    <span className="text-xs text-slate-500 font-mono truncate">
-                      {opponentPokemon.nameEn}
-                    </span>
-                  </div>
-
-                  <div className="flex flex-wrap items-center gap-1.5">
-                    {opponentPokemon.types.map(getTypeBadge)}
-                    <span className="text-[10px] font-black px-2 py-0.5 rounded bg-rose-100 text-rose-800 border border-rose-200 font-mono">
-                      {opponentPokemon.tier.split(' ')[0]}
-                    </span>
-                  </div>
-
-                  <div className="text-xs text-slate-600 pt-0.5">
-                    速度 <strong className="text-amber-700 font-mono font-black">{opponentPokemon.baseStats.speed}</strong> · 弱點：
-                    <span className="font-bold text-rose-700">
-                      {opponentPokemon.weaknesses.slice(0, 3).join('/')}
-                    </span>
-                  </div>
+                <div className="text-sm font-bold text-slate-800">
+                  戰術分析
                 </div>
-              </div>
-
-              {/* Quick Picks for Opponent Pokemon */}
-              <div className="pt-2 border-t border-rose-200/60 flex items-center gap-1.5 overflow-x-auto text-[11px]">
-                <span className="text-slate-400 font-bold shrink-0 font-mono">熱門速選:</span>
-                {quickMetaList.map((p) => (
-                  <button
-                    key={p.id}
-                    onClick={() => setOpponentPokemon(p)}
-                    className={`px-2 py-0.5 rounded-lg font-bold whitespace-nowrap transition-all cursor-pointer ${
-                      opponentPokemon.id === p.id
-                        ? 'bg-rose-600 text-white shadow-2xs'
-                        : 'bg-white text-slate-600 hover:bg-rose-100 border border-rose-200'
-                    }`}
-                  >
-                    {p.nameZh}
-                  </button>
-                ))}
               </div>
             </div>
           </div>
-        </section>
+        </div>
 
         {/* =========================================================
-            SECTION 2: RECOMMENDED BUILDS & MOVESETS (我方推薦配置放在勝負判定上方)
+            SECTION 1: (1) 照片辨識對方寶可夢（6隻）
         ========================================================= */}
-        <section className="space-y-6">
-          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-2 border-b border-slate-200">
+        <section className="bg-white rounded-3xl border border-slate-200 p-5 sm:p-6 shadow-sm space-y-5">
+          <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 pb-3 border-b border-slate-200">
             <div>
-              <h3 className="text-xl font-black text-slate-900 tracking-tight flex items-center gap-2">
-                <Crown className="w-5 h-5 text-amber-500" />
-                Champions 官方錦標賽推薦技能組合與配裝
-              </h3>
+              <div className="flex items-center gap-2">
+                <span className="px-2 py-0.5 rounded text-[11px] font-black bg-rose-100 text-rose-800 border border-rose-300 font-mono uppercase">
+                  Step 1
+                </span>
+                <h2 className="text-xl font-black text-slate-900 tracking-tight">
+                  (1) 照片辨識對方寶可夢（6隻）
+                </h2>
+              </div>
               <p className="text-xs text-slate-500 mt-0.5">
-                4 招式技能表、攜帶裝備、特性、太晶屬性與努力值分配速查
+                拍攝或上傳 Switch 選人畫面、Showdown 對戰截圖，AI 自動提取並配置敵方 6 隻陣容
               </p>
             </div>
 
-            {/* Read Aloud Trigger */}
-            <button
-              onClick={handleToggleSpeech}
-              className={`flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-bold transition-all shadow-2xs cursor-pointer active:scale-95 ${
-                isSpeaking
-                  ? 'bg-rose-500 text-white ring-2 ring-rose-200 animate-pulse'
-                  : 'bg-blue-600 hover:bg-blue-700 text-white'
-              }`}
-            >
-              {isSpeaking ? (
-                <>
-                  <Square className="w-4 h-4 fill-current" />
-                  <span>停止朗讀戰術</span>
-                </>
-              ) : (
-                <>
-                  <Volume2 className="w-4 h-4" />
-                  <span>語音朗讀此戰術</span>
-                </>
-              )}
-            </button>
+            {/* Photo Recognition Action Controls */}
+            <div className="flex items-center flex-wrap gap-2">
+              <input
+                ref={fileInputRef}
+                type="file"
+                accept="image/*"
+                className="hidden"
+                onChange={(e) => {
+                  const file = e.target.files?.[0];
+                  if (file) handleProcessImage(file);
+                }}
+              />
+              <input
+                ref={cameraInputRef}
+                type="file"
+                accept="image/*"
+                capture="environment"
+                className="hidden"
+                onChange={(e) => {
+                  const file = e.target.files?.[0];
+                  if (file) handleProcessImage(file);
+                }}
+              />
+
+              <button
+                onClick={() => cameraInputRef.current?.click()}
+                disabled={isRecognizing}
+                className="flex items-center gap-1.5 px-3 py-2 rounded-xl bg-rose-600 hover:bg-rose-700 text-white text-xs font-bold transition-all shadow-2xs active:scale-95 cursor-pointer disabled:opacity-50"
+                title="即時拍照辨識"
+              >
+                <Camera className="w-3.5 h-3.5" />
+                <span>拍照辨識 6 隻</span>
+              </button>
+
+              <button
+                onClick={() => fileInputRef.current?.click()}
+                disabled={isRecognizing}
+                className="flex items-center gap-1.5 px-3 py-2 rounded-xl bg-white hover:bg-rose-50 text-rose-800 text-xs font-bold border border-rose-300 transition-all shadow-2xs active:scale-95 cursor-pointer disabled:opacity-50"
+                title="上傳圖片辨識"
+              >
+                <Upload className="w-3.5 h-3.5 text-rose-600" />
+                <span>上傳截圖辨識</span>
+              </button>
+            </div>
           </div>
 
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-            {/* ==========================================
-                COLUMN 1: MY POKEMON RECOMMENDED BUILD (我方推薦配置)
-            ========================================== */}
-            <div className="bg-white rounded-3xl border-2 border-blue-200 p-5 sm:p-6 shadow-sm space-y-5">
-              <div className="flex items-center justify-between pb-4 border-b border-slate-100">
-                <div className="flex items-center gap-3">
-                  <div className="w-12 h-12 bg-blue-50 rounded-2xl border border-blue-200 p-1 flex items-center justify-center shrink-0">
-                    <img
-                      src={myPokemon.officialArtUrl}
-                      alt={myPokemon.nameZh}
-                      referrerPolicy="no-referrer"
-                      className="w-full h-full object-contain"
-                    />
+          {/* Photo recognition status & feedback banner */}
+          {(isRecognizing || recognitionStatus || uploadedPreview) && (
+            <div className="p-3.5 rounded-2xl bg-slate-50 border border-slate-200 flex flex-col sm:flex-row items-center gap-3">
+              {uploadedPreview && (
+                <img
+                  src={uploadedPreview}
+                  alt="辨識照片預覽"
+                  className="w-14 h-14 object-cover rounded-xl border border-slate-300 shrink-0 shadow-2xs"
+                />
+              )}
+              <div className="flex-1 text-xs">
+                {isRecognizing ? (
+                  <div className="flex items-center gap-2 text-rose-600 font-bold">
+                    <RefreshCw className="w-4 h-4 animate-spin" />
+                    <span>Gemini AI 正在深度辨識隊伍畫面中的 6 隻寶可夢角色...</span>
                   </div>
-                  <div>
-                    <div className="flex items-center gap-2">
-                      <h4 className="text-lg font-black text-slate-900">
-                        {myPokemon.nameZh}
-                      </h4>
-                      <span className="text-xs font-mono font-bold text-blue-700 bg-blue-50 px-2 py-0.5 rounded-full border border-blue-200">
-                        我方推薦配置
-                      </span>
-                    </div>
-                    <p className="text-xs text-slate-500 font-medium">
-                      {myBuild?.buildNameZh || 'WCS 冠軍標準型'}
-                    </p>
+                ) : (
+                  <div className="font-medium text-slate-700">
+                    {recognitionStatus}
                   </div>
-                </div>
-
-                <div className="text-right">
-                  <span className="text-xs font-mono font-bold text-slate-400 block">推薦太晶</span>
-                  <span className="inline-block text-xs font-black text-slate-900 bg-slate-100 px-2 py-0.5 rounded-md border border-slate-200 mt-0.5">
-                    太晶【{myBuild?.teraType || 'Water'}】
-                  </span>
-                </div>
-              </div>
-
-              {/* 4 Moves Grid */}
-              <div className="space-y-2.5">
-                <div className="text-xs font-black text-slate-700 uppercase font-mono flex items-center gap-1.5">
-                  <Zap className="w-3.5 h-3.5 text-amber-500" />
-                  推薦 4 招式組合 (Moveset)：
-                </div>
-
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
-                  {myBuild?.moves.map((move: ChampionMove, idx: number) => (
-                    <div
-                      key={idx}
-                      className="p-3 rounded-2xl bg-slate-50/80 border border-slate-200 hover:border-blue-400 hover:bg-blue-50/30 transition-all space-y-1.5 shadow-2xs"
-                    >
-                      <div className="flex items-center justify-between">
-                        <div className="flex items-center gap-1.5">
-                          <span className="w-4 h-4 rounded-full bg-slate-200 text-slate-700 text-[10px] font-mono font-black flex items-center justify-center">
-                            {idx + 1}
-                          </span>
-                          <span className="text-xs font-black text-slate-900">
-                            {move.nameZh}
-                          </span>
-                        </div>
-                        <div className="flex items-center gap-1">
-                          {getTypeBadge(move.type)}
-                          {getCategoryBadge(move.category)}
-                        </div>
-                      </div>
-
-                      <div className="text-[11px] font-mono text-slate-500 flex items-center gap-2">
-                        <span>威力: <strong className="text-slate-800">{move.power > 0 ? move.power : '—'}</strong></span>
-                        <span>命中: <strong className="text-slate-800">{move.accuracy > 0 ? `${move.accuracy}%` : '必中'}</strong></span>
-                      </div>
-
-                      <p className="text-[11px] text-slate-600 line-clamp-2">
-                        {move.tacticalTip || move.description}
-                      </p>
-                    </div>
-                  ))}
-                </div>
-              </div>
-
-              {/* Core Items & Setup Highlights */}
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-2">
-                {/* Held Item */}
-                <div className="p-3.5 rounded-2xl bg-amber-50/60 border border-amber-200 space-y-1">
-                  <div className="text-[10px] font-black text-amber-800 uppercase font-mono">
-                    推薦持有道具 (Held Item)
-                  </div>
-                  <div className="text-xs font-black text-slate-900">
-                    {myBuild?.heldItem.nameZh}
-                    <span className="text-[10px] text-slate-400 font-mono ml-1">
-                      ({myBuild?.heldItem.nameEn})
-                    </span>
-                  </div>
-                  <p className="text-[11px] text-slate-600 leading-tight">
-                    {myBuild?.heldItem.effect}
-                  </p>
-                </div>
-
-                {/* Ability & Nature */}
-                <div className="p-3.5 rounded-2xl bg-slate-50 border border-slate-200 space-y-1">
-                  <div className="text-[10px] font-black text-slate-500 uppercase font-mono">
-                    核心特性與性格 (Ability & Nature)
-                  </div>
-                  <div className="text-xs font-black text-slate-900">
-                    特性：{myBuild?.ability.nameZh} · 性格：{myBuild?.nature}
-                  </div>
-                  <div className="text-[10px] font-mono text-amber-800 bg-white px-2 py-1 rounded border border-slate-200 font-bold truncate">
-                    努力值: {myBuild?.evSpread}
-                  </div>
-                </div>
-              </div>
-
-              {/* Combo Strategy & Partners */}
-              <div className="p-3.5 rounded-2xl bg-slate-50 border border-slate-200 space-y-2">
-                <div className="text-xs font-black text-slate-800 flex items-center gap-1.5 font-mono">
-                  <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" />
-                  推薦連鎖微操：
-                </div>
-                <p className="text-xs text-slate-700 leading-relaxed font-medium">
-                  {myBuild?.comboTactics}
-                </p>
-                <div className="flex flex-wrap items-center gap-1.5 pt-1 border-t border-slate-200/80">
-                  <span className="text-[11px] font-bold text-slate-400 font-mono">最佳雙打搭檔:</span>
-                  {myBuild?.recommendedPartners.map((partner: string, i: number) => (
-                    <span
-                      key={i}
-                      className="px-2 py-0.5 rounded-lg bg-white border border-slate-200 text-xs font-bold text-slate-700"
-                    >
-                      🤝 {partner}
-                    </span>
-                  ))}
-                </div>
+                )}
               </div>
             </div>
+          )}
 
-            {/* ==========================================
-                COLUMN 2: OPPONENT COUNTER & BUILD
-            ========================================== */}
-            <div className="bg-white rounded-3xl border-2 border-rose-200 p-5 sm:p-6 shadow-sm space-y-5">
-              <div className="flex items-center justify-between pb-4 border-b border-slate-100">
-                <div className="flex items-center gap-3">
-                  <div className="w-12 h-12 bg-rose-50 rounded-2xl border border-rose-200 p-1 flex items-center justify-center shrink-0">
+          {/* Preset templates for quick 1-click test */}
+          <div className="flex items-center gap-2 overflow-x-auto pb-1 text-xs">
+            <span className="text-slate-400 font-bold shrink-0 font-mono text-[11px]">
+              一鍵載入經典對手範本:
+            </span>
+            {PRESET_OPPONENT_TEAMS.map((preset) => (
+              <button
+                key={preset.name}
+                onClick={() => handleLoadPreset(preset)}
+                className="px-2.5 py-1 rounded-xl bg-slate-100 hover:bg-rose-50 hover:text-rose-900 border border-slate-200 hover:border-rose-300 text-slate-700 font-bold whitespace-nowrap transition-all cursor-pointer shadow-2xs"
+              >
+                {preset.name}
+              </button>
+            ))}
+          </div>
+
+          {/* Opponent 6-Pokemon Grid */}
+          <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
+            {opponentTeam.map((pokemon, index) => (
+              <div
+                key={`${pokemon.id}-${index}`}
+                className="relative rounded-2xl bg-rose-50/40 border border-rose-200/90 p-3 flex flex-col justify-between hover:border-rose-400 transition-all shadow-2xs group"
+              >
+                <div className="flex items-center justify-between">
+                  <span className="text-[10px] font-mono font-black px-1.5 py-0.5 rounded bg-rose-600 text-white">
+                    Slot {index + 1}
+                  </span>
+                  <button
+                    onClick={() => setEditingOpponentIndex(index)}
+                    className="text-[11px] font-bold text-rose-700 hover:text-rose-900 underline cursor-pointer"
+                  >
+                    更換
+                  </button>
+                </div>
+
+                <div className="my-2 flex flex-col items-center text-center">
+                  <div className="w-20 h-20 bg-white rounded-xl border border-rose-200/80 p-1 flex items-center justify-center shadow-2xs">
                     <img
-                      src={opponentPokemon.officialArtUrl}
-                      alt={opponentPokemon.nameZh}
+                      src={pokemon.officialArtUrl}
+                      alt={pokemon.nameZh}
                       referrerPolicy="no-referrer"
-                      className="w-full h-full object-contain"
+                      className="w-full h-full object-contain filter drop-shadow-xs group-hover:scale-105 transition-transform"
                     />
                   </div>
-                  <div>
-                    <div className="flex items-center gap-2">
-                      <h4 className="text-lg font-black text-slate-900">
-                        {opponentPokemon.nameZh}
-                      </h4>
-                      <span className="text-xs font-mono font-bold text-rose-700 bg-rose-50 px-2 py-0.5 rounded-full border border-rose-200">
-                        對手預計配置
-                      </span>
-                    </div>
-                    <p className="text-xs text-slate-500 font-medium">
-                      {oppBuild?.buildNameZh || '主流對戰型'}
-                    </p>
-                  </div>
-                </div>
-
-                <div className="text-right">
-                  <span className="text-xs font-mono font-bold text-slate-400 block">常用太晶</span>
-                  <span className="inline-block text-xs font-black text-slate-900 bg-slate-100 px-2 py-0.5 rounded-md border border-slate-200 mt-0.5">
-                    太晶【{oppBuild?.teraType || 'Ghost'}】
+                  <h4 className="text-sm font-black text-slate-900 mt-2 truncate w-full">
+                    {pokemon.nameZh}
+                  </h4>
+                  <span className="text-[10px] text-slate-500 font-mono truncate w-full">
+                    {pokemon.nameEn}
                   </span>
                 </div>
-              </div>
 
-              {/* Opponent 4 Moves Grid */}
-              <div className="space-y-2.5">
-                <div className="text-xs font-black text-slate-700 uppercase font-mono flex items-center gap-1.5">
-                  <Flame className="w-3.5 h-3.5 text-rose-500" />
-                  對手常見 4 招式組合預警：
-                </div>
-
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
-                  {oppBuild?.moves.map((move: ChampionMove, idx: number) => (
-                    <div
-                      key={idx}
-                      className="p-3 rounded-2xl bg-slate-50/80 border border-slate-200 hover:border-rose-300 hover:bg-rose-50/20 transition-all space-y-1.5 shadow-2xs"
-                    >
-                      <div className="flex items-center justify-between">
-                        <div className="flex items-center gap-1.5">
-                          <span className="w-4 h-4 rounded-full bg-slate-200 text-slate-700 text-[10px] font-mono font-black flex items-center justify-center">
-                            {idx + 1}
-                          </span>
-                          <span className="text-xs font-black text-slate-900">
-                            {move.nameZh}
-                          </span>
-                        </div>
-                        <div className="flex items-center gap-1">
-                          {getTypeBadge(move.type)}
-                          {getCategoryBadge(move.category)}
-                        </div>
-                      </div>
-
-                      <div className="text-[11px] font-mono text-slate-500 flex items-center gap-2">
-                        <span>威力: <strong className="text-slate-800">{move.power > 0 ? move.power : '—'}</strong></span>
-                        <span>命中: <strong className="text-slate-800">{move.accuracy > 0 ? `${move.accuracy}%` : '必中'}</strong></span>
-                      </div>
-
-                      <p className="text-[11px] text-slate-600 line-clamp-2">
-                        {move.tacticalTip || move.description}
-                      </p>
-                    </div>
-                  ))}
+                <div className="space-y-1.5 pt-1 border-t border-rose-200/50">
+                  <div className="flex flex-wrap justify-center gap-1">
+                    {pokemon.types.map(getTypeBadge)}
+                  </div>
+                  <div className="text-[10px] text-slate-600 text-center font-mono">
+                    速 <strong className="text-amber-700">{pokemon.baseStats.speed}</strong> · 總 {pokemon.baseStats.total}
+                  </div>
                 </div>
               </div>
-
-              {/* Opponent Weaknesses & Counter Highlights */}
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-2">
-                {/* Weaknesses */}
-                <div className="p-3.5 rounded-2xl bg-rose-50/60 border border-rose-200 space-y-1">
-                  <div className="text-[10px] font-black text-rose-800 uppercase font-mono">
-                    對手致命破防弱點 (Weaknesses)
-                  </div>
-                  <div className="flex flex-wrap gap-1 pt-0.5">
-                    {opponentPokemon.weaknesses.map(getTypeBadge)}
-                  </div>
-                  <p className="text-[11px] text-slate-600 leading-tight pt-1">
-                    針對以上屬性使用本系或補盲招式可達成雙倍傷害斬殺。
-                  </p>
-                </div>
-
-                {/* Opponent Held Item */}
-                <div className="p-3.5 rounded-2xl bg-slate-50 border border-slate-200 space-y-1">
-                  <div className="text-[10px] font-black text-slate-500 uppercase font-mono">
-                    對手預計攜帶道具 (Held Item)
-                  </div>
-                  <div className="text-xs font-black text-slate-900">
-                    {oppBuild?.heldItem.nameZh}
-                  </div>
-                  <p className="text-[11px] text-slate-600 leading-tight">
-                    {oppBuild?.heldItem.effect}
-                  </p>
-                </div>
-              </div>
-
-              {/* Specific Counter Guide Banner */}
-              <div className="p-3.5 rounded-2xl bg-rose-50/70 border border-rose-200 space-y-1.5">
-                <div className="text-xs font-black text-rose-900 flex items-center gap-1.5 font-mono">
-                  <AlertTriangle className="w-3.5 h-3.5 text-rose-600" />
-                  破招處決指南：
-                </div>
-                <p className="text-xs text-rose-900 leading-relaxed font-medium">
-                  {myPokemon.counterAdvice?.[opponentPokemon.id] ||
-                    `面對【${opponentPokemon.nameZh}】，注意其特性【${opponentPokemon.primaryAbility.nameZh}】。利用我方速度優勢或太晶抗性壓制其主要本系輸出。`}
-                </p>
-              </div>
-            </div>
+            ))}
           </div>
         </section>
 
         {/* =========================================================
-            SECTION 3: CLASH & BATTLE ANALYSIS (勝負判定與勝率分析)
+            SECTION 2: (2) 建議我方對應對戰寶可夢（6隻）
         ========================================================= */}
-        <section className="bg-white rounded-3xl border border-slate-200 p-5 sm:p-7 shadow-sm space-y-6">
-          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-4 border-b border-slate-100">
+        <section className="bg-white rounded-3xl border border-slate-200 p-5 sm:p-6 shadow-sm space-y-5">
+          <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 pb-3 border-b border-slate-200">
             <div>
-              <div className="flex items-center gap-2 text-xs font-black text-amber-600 uppercase font-mono tracking-wider">
-                <Trophy className="w-4 h-4 text-amber-500" />
-                Champions 即時對戰推演分析
+              <div className="flex items-center gap-2">
+                <span className="px-2 py-0.5 rounded text-[11px] font-black bg-blue-100 text-blue-800 border border-blue-300 font-mono uppercase">
+                  Step 2
+                </span>
+                <h2 className="text-xl font-black text-slate-900 tracking-tight">
+                  (2) 建議我方對應對戰寶可夢（6隻）
+                </h2>
               </div>
-              <h3 className="text-xl font-black text-slate-900 tracking-tight mt-0.5">
-                【{myPokemon.nameZh}】對戰【{opponentPokemon.nameZh}】勝負判定
-              </h3>
+              <p className="text-xs text-slate-500 mt-0.5">
+                依據敵方 6 隻之弱點分佈與主力威脅，自動演算世界冠軍級最佳聯防反制陣容與 4 招式配置
+              </p>
             </div>
 
-            {/* Overall Advantage Badge */}
-            <div className="flex items-center gap-3">
-              <span
-                className={`text-xs sm:text-sm font-black px-4 py-1.5 rounded-xl border ${getAdvantageBadge(
-                  matchupResult.advantageTier
-                )}`}
-              >
-                {matchupResult.advantageTier}
-              </span>
-            </div>
+            <button
+              onClick={() => {
+                setMyCustomOverrides([null, null, null, null, null, null]);
+              }}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-blue-50 hover:bg-blue-100 text-blue-800 border border-blue-200 text-xs font-bold transition-all shadow-2xs active:scale-95 cursor-pointer"
+              title="重設為演算法最佳建議"
+            >
+              <RefreshCw className="w-3.5 h-3.5 text-blue-600" />
+              <span>重新演算最佳推薦</span>
+            </button>
           </div>
 
-          {/* Win Rate Bar & Key Metrics */}
-          <div className="space-y-4">
-            <div className="flex items-center justify-between text-xs sm:text-sm font-black font-mono">
-              <span className="flex items-center gap-1.5 text-blue-700">
-                <span className="w-2.5 h-2.5 rounded-full bg-blue-600" />
-                我方勝率：{matchupResult.winRate}%
-              </span>
-              <span className="flex items-center gap-1.5 text-rose-700">
-                對手勝率：{opponentWinRate}%
-                <span className="w-2.5 h-2.5 rounded-full bg-rose-600" />
-              </span>
-            </div>
+          {/* Recommended 6 Counter Pokémon Cards */}
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+            {myTeamMembers.map((member, index) => {
+              const p = member.pokemon;
+              const build = p.builds[0];
 
-            {/* Visual Winrate Split Bar */}
-            <div className="w-full h-3.5 bg-rose-100 rounded-full overflow-hidden flex shadow-inner">
-              <div
-                className="bg-blue-600 transition-all duration-500 ease-out h-full"
-                style={{ width: `${matchupResult.winRate}%` }}
-              />
-              <div
-                className="bg-rose-500 transition-all duration-500 ease-out h-full"
-                style={{ width: `${opponentWinRate}%` }}
-              />
-            </div>
-
-            {/* 3 Core Matchup Pillars (屬性倍率、速度線、太晶化建議) */}
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-3 pt-2">
-              {/* 1. Type Effectiveness */}
-              <div className="p-3.5 rounded-2xl bg-slate-50 border border-slate-200 space-y-1">
-                <div className="text-[11px] font-black text-slate-500 uppercase font-mono">
-                  18 屬性相剋倍率
-                </div>
-                <div className="text-sm font-black text-slate-900">
-                  造成傷害：
-                  <span className={matchupResult.typeMatchup.myOffenseMultiplier >= 2 ? 'text-emerald-700' : 'text-slate-800'}>
-                    {matchupResult.typeMatchup.myOffenseMultiplier}x
-                  </span>
-                  {' '}vs 承受：
-                  <span className={matchupResult.typeMatchup.opponentOffenseMultiplier >= 2 ? 'text-rose-700' : 'text-slate-800'}>
-                    {matchupResult.typeMatchup.opponentOffenseMultiplier}x
-                  </span>
-                </div>
-                <div className="text-xs text-slate-600 font-medium">
-                  {matchupResult.typeMatchup.summary}
-                </div>
-              </div>
-
-              {/* 2. Speed Tier Comparison */}
-              <div className="p-3.5 rounded-2xl bg-slate-50 border border-slate-200 space-y-1">
-                <div className="text-[11px] font-black text-slate-500 uppercase font-mono">
-                  速度線先手權 (Speed Tier)
-                </div>
-                <div className="text-sm font-black text-slate-900 flex items-center gap-1.5">
-                  <Gauge className="w-4 h-4 text-amber-600" />
-                  {matchupResult.speedAdvantage.summary}
-                </div>
-                <div className="text-xs text-slate-600 font-medium">
-                  {matchupResult.speedAdvantage.winner === 'my'
-                    ? '我方享有自然先手主動權，可優先進攻或換人。'
-                    : matchupResult.speedAdvantage.winner === 'opponent'
-                    ? '對手先手速度更快，第一回合建議「守住」或靠道具換血。'
-                    : '同速博弈，需注意隨機先手或先制招式。'}
-                </div>
-              </div>
-
-              {/* 3. Recommended Tera Adaptation */}
-              <div className="p-3.5 rounded-2xl bg-amber-50/70 border border-amber-200 space-y-1">
-                <div className="text-[11px] font-black text-amber-800 uppercase font-mono flex items-center gap-1">
-                  <Sparkles className="w-3.5 h-3.5 text-amber-600" />
-                  對局推薦太晶屬性 (Tera Adaptation)
-                </div>
-                <div className="flex items-center gap-2">
-                  <span className="text-sm font-black text-amber-950">
-                    太晶【{matchupResult.recommendedTeraAdaptation.recommendedTera}】
-                  </span>
-                  {getTypeBadge(matchupResult.recommendedTeraAdaptation.recommendedTera)}
-                </div>
-                <div className="text-xs text-amber-900 font-medium">
-                  {matchupResult.recommendedTeraAdaptation.rationale}
-                </div>
-              </div>
-            </div>
-
-            {/* Tactical Directives Summary Banner */}
-            <div className="p-4 rounded-2xl bg-slate-900 text-white space-y-2 shadow-2xs">
-              <div className="flex items-center justify-between">
-                <div className="flex items-center gap-2 text-xs font-black text-amber-400 font-mono uppercase tracking-wider">
-                  <Crosshair className="w-4 h-4" />
-                  WCS 錦標賽核心對戰指令：
-                </div>
-                <button
-                  onClick={handleToggleSpeech}
-                  className="flex items-center gap-1.5 text-xs text-amber-400 hover:text-white font-bold transition-colors cursor-pointer"
+              return (
+                <div
+                  key={`${p.id}-${index}`}
+                  className="rounded-2xl bg-blue-50/30 border border-blue-200 p-4 flex flex-col justify-between hover:border-blue-400 transition-all shadow-2xs space-y-3"
                 >
-                  <Volume2 className="w-3.5 h-3.5" />
-                  <span>{isSpeaking ? '停止播報' : '語音播報指令'}</span>
-                </button>
+                  {/* Card Header with Role Badge */}
+                  <div className="flex items-center justify-between">
+                    <span className="px-2.5 py-1 rounded-lg text-xs font-black bg-blue-600 text-white shadow-2xs font-mono">
+                      {member.roleBadge}
+                    </span>
+                    <button
+                      onClick={() => setEditingMyIndex(index)}
+                      className="text-xs font-bold text-blue-700 hover:text-blue-900 underline cursor-pointer"
+                    >
+                      更換
+                    </button>
+                  </div>
+
+                  {/* Pokemon Main Info */}
+                  <div className="flex items-center gap-3">
+                    <div className="relative w-18 h-18 bg-white rounded-xl border border-blue-200 p-1 flex items-center justify-center shrink-0 shadow-2xs">
+                      <img
+                        src={p.officialArtUrl}
+                        alt={p.nameZh}
+                        referrerPolicy="no-referrer"
+                        className="w-full h-full object-contain filter drop-shadow-xs"
+                      />
+                      <span className="absolute bottom-0.5 right-0.5 text-[8px] font-mono font-black px-1 rounded bg-blue-600 text-white">
+                        #{p.pokedexNumber}
+                      </span>
+                    </div>
+
+                    <div className="min-w-0 flex-1 space-y-1">
+                      <div className="flex items-baseline gap-1.5">
+                        <h4 className="text-base font-black text-slate-900 truncate">
+                          {p.nameZh}
+                        </h4>
+                        <span className="text-[11px] text-slate-400 font-mono truncate">
+                          {p.nameEn}
+                        </span>
+                      </div>
+                      <div className="flex flex-wrap items-center gap-1">
+                        {p.types.map(getTypeBadge)}
+                        <span className="text-[10px] font-mono font-bold px-1.5 py-0.5 rounded bg-amber-50 text-amber-800 border border-amber-200">
+                          {p.tier.split(' ')[0]}
+                        </span>
+                      </div>
+                      <div className="text-[11px] text-slate-600 font-mono">
+                        速度 <strong className="text-amber-700 font-black">{p.baseStats.speed}</strong> · 總種族值 {p.baseStats.total}
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Target Opponents Chips */}
+                  {member.targetOpponents.length > 0 && (
+                    <div className="p-2 rounded-xl bg-white border border-blue-100 text-xs space-y-1">
+                      <div className="text-[10px] font-black text-rose-700 uppercase font-mono">
+                        🎯 針對打擊敵方目標:
+                      </div>
+                      <div className="flex flex-wrap gap-1">
+                        {member.targetOpponents.map((opp) => (
+                          <span
+                            key={opp.id}
+                            className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-rose-50 text-rose-800 border border-rose-200 text-[11px] font-bold"
+                          >
+                            <img
+                              src={opp.officialArtUrl}
+                              alt={opp.nameZh}
+                              referrerPolicy="no-referrer"
+                              className="w-3.5 h-3.5 object-contain"
+                            />
+                            {opp.nameZh}
+                          </span>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Tactical Rationale */}
+                  <p className="text-[11px] text-slate-600 leading-relaxed bg-white/70 p-2.5 rounded-xl border border-blue-100">
+                    {member.counterRationale}
+                  </p>
+
+                  {/* Competitive 4 Moves & Build Specs */}
+                  <div className="pt-2 border-t border-blue-200/60 space-y-2 text-xs">
+                    <div className="font-bold text-slate-700 flex items-center justify-between">
+                      <span className="text-[11px] text-slate-500 font-mono">推薦 4 技能組合:</span>
+                      <span className="text-[11px] text-blue-700 font-mono font-bold">
+                        太晶【{build?.teraType || 'Water'}】
+                      </span>
+                    </div>
+
+                    <div className="grid grid-cols-2 gap-1.5">
+                      {build?.moves.slice(0, 4).map((move, mIdx) => (
+                        <div
+                          key={mIdx}
+                          className="p-1.5 rounded-lg bg-white border border-slate-200 flex items-center justify-between text-[11px]"
+                        >
+                          <span className="font-bold text-slate-800 truncate">{move.nameZh}</span>
+                          <span className="text-[9px] px-1 py-0.2 rounded bg-slate-100 text-slate-600 font-mono shrink-0 ml-1">
+                            {move.type}
+                          </span>
+                        </div>
+                      ))}
+                    </div>
+
+                    <div className="flex items-center justify-between text-[10px] text-slate-500 pt-1 font-mono">
+                      <span>道具：<strong className="text-slate-800">{build?.heldItem.nameZh}</strong></span>
+                      <span>特性：<strong className="text-slate-800">{build?.ability.nameZh}</strong></span>
+                    </div>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </section>
+
+        {/* =========================================================
+            SECTION 3: (3) 戰術分析 (Tactics Analysis & Female TTS)
+        ========================================================= */}
+        <section className="bg-white rounded-3xl border border-slate-200 p-5 sm:p-6 shadow-sm space-y-6">
+          <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 pb-3 border-b border-slate-200">
+            <div>
+              <div className="flex items-center gap-2">
+                <span className="px-2 py-0.5 rounded text-[11px] font-black bg-emerald-100 text-emerald-800 border border-emerald-300 font-mono uppercase">
+                  Step 3
+                </span>
+                <h2 className="text-xl font-black text-slate-900 tracking-tight">
+                  (3) 戰術分析
+                </h2>
               </div>
-              <ul className="space-y-1 text-xs text-slate-200 leading-relaxed font-sans">
-                {matchupResult.tacticalDirectives.map((directive, idx) => (
-                  <li key={idx} className="flex items-start gap-2">
-                    <span className="text-amber-400 font-bold mt-0.5">•</span>
-                    <span>{directive}</span>
-                  </li>
-                ))}
-              </ul>
+              <p className="text-xs text-slate-500 mt-0.5">
+                全隊剋制矩陣、最佳首發推薦、速度線排行與太晶化發動時機速查
+              </p>
+            </div>
+
+            {/* Read Aloud & AI Coach buttons */}
+            <div className="flex items-center flex-wrap gap-2">
+              <button
+                onClick={handleToggleSpeech}
+                className={`flex items-center gap-1.5 px-4 py-2 rounded-xl text-xs font-bold transition-all shadow-2xs active:scale-95 cursor-pointer ${
+                  isSpeaking
+                    ? 'bg-rose-500 text-white ring-2 ring-rose-200 animate-pulse'
+                    : 'bg-blue-600 hover:bg-blue-700 text-white'
+                }`}
+                title="以甜美女聲朗讀戰術分析"
+              >
+                {isSpeaking ? (
+                  <>
+                    <Square className="w-3.5 h-3.5 fill-current" />
+                    <span>停止女聲朗讀</span>
+                  </>
+                ) : (
+                  <>
+                    <Volume2 className="w-3.5 h-3.5" />
+                    <span>女聲朗讀戰術分析</span>
+                  </>
+                )}
+              </button>
+
+              <button
+                onClick={handleGetAiAnalysis}
+                disabled={isGeneratingAi}
+                className="flex items-center gap-1.5 px-4 py-2 rounded-xl bg-amber-50 hover:bg-amber-100 text-amber-900 border border-amber-300 text-xs font-bold transition-all shadow-2xs active:scale-95 cursor-pointer disabled:opacity-50"
+              >
+                <Sparkles className="w-3.5 h-3.5 text-amber-600" />
+                <span>{isGeneratingAi ? 'AI 正在分析...' : 'AI 世界冠軍深度復盤'}</span>
+              </button>
             </div>
           </div>
+
+          {/* Top Key Tactical Cards Row */}
+          <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+            {/* 1. Win Rate Card */}
+            <div className="p-4 rounded-2xl bg-slate-50 border border-slate-200 flex flex-col justify-between">
+              <span className="text-[11px] font-black text-slate-500 uppercase font-mono">
+                整體預測勝率
+              </span>
+              <div className="my-2">
+                <div className="text-3xl font-black text-blue-600 font-mono">
+                  {tacticsAnalysis.winRate}%
+                </div>
+                <div className="text-xs font-bold text-slate-700 mt-1">
+                  {tacticsAnalysis.advantageTier}
+                </div>
+              </div>
+              <div className="w-full bg-slate-200 rounded-full h-2 overflow-hidden">
+                <div
+                  className="bg-blue-600 h-2 rounded-full transition-all duration-500"
+                  style={{ width: `${tacticsAnalysis.winRate}%` }}
+                />
+              </div>
+            </div>
+
+            {/* 2. Lead Recommendation Card */}
+            <div className="p-4 rounded-2xl bg-slate-50 border border-slate-200 flex flex-col justify-between">
+              <span className="text-[11px] font-black text-blue-700 uppercase font-mono flex items-center gap-1">
+                <Zap className="w-3 h-3" />
+                建議最佳首發組合 (Leads)
+              </span>
+              <div className="my-2 flex items-center gap-2">
+                {tacticsAnalysis.leadRecommendation.leadPokemon.map((lead) => (
+                  <div
+                    key={lead.id}
+                    className="flex items-center gap-1.5 px-2 py-1 rounded-xl bg-white border border-slate-200 text-xs font-bold"
+                  >
+                    <img
+                      src={lead.officialArtUrl}
+                      alt={lead.nameZh}
+                      referrerPolicy="no-referrer"
+                      className="w-5 h-5 object-contain"
+                    />
+                    <span>{lead.nameZh}</span>
+                  </div>
+                ))}
+              </div>
+              <p className="text-[11px] text-slate-600 leading-tight">
+                掌握首回合控速與先手權
+              </p>
+            </div>
+
+            {/* 3. Threat Neutralization Card */}
+            <div className="p-4 rounded-2xl bg-slate-50 border border-slate-200 flex flex-col justify-between">
+              <span className="text-[11px] font-black text-rose-700 uppercase font-mono flex items-center gap-1">
+                <Target className="w-3 h-3" />
+                敵方頭號威脅消滅
+              </span>
+              <div className="my-2 flex items-center gap-2">
+                <img
+                  src={tacticsAnalysis.threatAnalysis.highestThreat.officialArtUrl}
+                  alt={tacticsAnalysis.threatAnalysis.highestThreat.nameZh}
+                  referrerPolicy="no-referrer"
+                  className="w-7 h-7 object-contain"
+                />
+                <div>
+                  <div className="text-xs font-black text-slate-900">
+                    {tacticsAnalysis.threatAnalysis.highestThreat.nameZh}
+                  </div>
+                  <div className="text-[10px] text-slate-500 font-mono">
+                    速 {tacticsAnalysis.threatAnalysis.highestThreat.baseStats.speed}
+                  </div>
+                </div>
+              </div>
+              <p className="text-[11px] text-slate-600 leading-tight">
+                {tacticsAnalysis.threatAnalysis.counterSolution}
+              </p>
+            </div>
+
+            {/* 4. Tera Priority Card */}
+            <div className="p-4 rounded-2xl bg-slate-50 border border-slate-200 flex flex-col justify-between">
+              <span className="text-[11px] font-black text-amber-700 uppercase font-mono flex items-center gap-1">
+                <Crown className="w-3 h-3" />
+                第一優先太晶化推薦
+              </span>
+              <div className="my-2 flex items-center gap-2">
+                <img
+                  src={tacticsAnalysis.teraPriority.recommendedPokemon.officialArtUrl}
+                  alt={tacticsAnalysis.teraPriority.recommendedPokemon.nameZh}
+                  referrerPolicy="no-referrer"
+                  className="w-7 h-7 object-contain"
+                />
+                <div>
+                  <div className="text-xs font-black text-slate-900">
+                    {tacticsAnalysis.teraPriority.recommendedPokemon.nameZh}
+                  </div>
+                  <div className="text-[10px] text-amber-800 font-bold font-mono">
+                    太晶【{tacticsAnalysis.teraPriority.teraType}】
+                  </div>
+                </div>
+              </div>
+              <p className="text-[11px] text-slate-600 leading-tight">
+                規避弱點致命傷並提供斬殺火力
+              </p>
+            </div>
+          </div>
+
+          {/* Tactical Sub-Tabs Bar */}
+          <div className="flex items-center gap-2 border-b border-slate-200 pb-2 overflow-x-auto text-xs font-bold">
+            <button
+              onClick={() => setActiveTacticsTab('matrix')}
+              className={`px-3 py-1.5 rounded-xl transition-all cursor-pointer ${
+                activeTacticsTab === 'matrix'
+                  ? 'bg-blue-600 text-white shadow-2xs'
+                  : 'bg-slate-100 text-slate-700 hover:bg-slate-200'
+              }`}
+            >
+              ⚔️ 6v6 剋制覆蓋矩陣
+            </button>
+            <button
+              onClick={() => setActiveTacticsTab('speed')}
+              className={`px-3 py-1.5 rounded-xl transition-all cursor-pointer ${
+                activeTacticsTab === 'speed'
+                  ? 'bg-blue-600 text-white shadow-2xs'
+                  : 'bg-slate-100 text-slate-700 hover:bg-slate-200'
+              }`}
+            >
+              ⚡ 雙方速度線排行 (12隻比對)
+            </button>
+            <button
+              onClick={() => setActiveTacticsTab('tera')}
+              className={`px-3 py-1.5 rounded-xl transition-all cursor-pointer ${
+                activeTacticsTab === 'tera'
+                  ? 'bg-blue-600 text-white shadow-2xs'
+                  : 'bg-slate-100 text-slate-700 hover:bg-slate-200'
+              }`}
+            >
+              🛡️ 開局博弈與太晶化轉折
+            </button>
+            {aiAnalysisText && (
+              <button
+                onClick={() => setActiveTacticsTab('ai')}
+                className={`px-3 py-1.5 rounded-xl transition-all cursor-pointer ${
+                  activeTacticsTab === 'ai'
+                    ? 'bg-amber-600 text-white shadow-2xs'
+                    : 'bg-amber-50 text-amber-800 hover:bg-amber-100'
+                }`}
+              >
+                ✨ AI 世界冠軍復盤分析
+              </button>
+            )}
+          </div>
+
+          {/* Sub-Tab 1: 6x6 Coverage Matrix */}
+          {activeTacticsTab === 'matrix' && (
+            <div className="space-y-3">
+              <div className="text-xs text-slate-500">
+                點擊任一網格查看該對位的屬性打擊倍率與實戰出招提示：
+              </div>
+
+              <div className="overflow-x-auto border border-slate-200 rounded-2xl bg-white shadow-2xs">
+                <table className="w-full text-xs text-left">
+                  <thead>
+                    <tr className="bg-slate-50 border-b border-slate-200">
+                      <th className="p-3 font-black text-slate-500 font-mono">我方 \ 敵方</th>
+                      {opponentTeam.map((opp, idx) => (
+                        <th key={opp.id} className="p-2 text-center">
+                          <div className="flex flex-col items-center">
+                            <img
+                              src={opp.officialArtUrl}
+                              alt={opp.nameZh}
+                              referrerPolicy="no-referrer"
+                              className="w-7 h-7 object-contain"
+                            />
+                            <span className="font-bold text-slate-800 text-[11px] mt-1 truncate max-w-[64px]">
+                              {opp.nameZh}
+                            </span>
+                          </div>
+                        </th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {myTeam.map((my) => (
+                      <tr key={my.id} className="border-b border-slate-100 hover:bg-slate-50/50">
+                        <td className="p-2.5 font-bold text-slate-900 bg-slate-50/40 border-r border-slate-200">
+                          <div className="flex items-center gap-2">
+                            <img
+                              src={my.officialArtUrl}
+                              alt={my.nameZh}
+                              referrerPolicy="no-referrer"
+                              className="w-6 h-6 object-contain shrink-0"
+                            />
+                            <span className="truncate max-w-[90px]">{my.nameZh}</span>
+                          </div>
+                        </td>
+
+                        {opponentTeam.map((opp) => {
+                          const cell = matrixCells.find(
+                            (c) => c.myPokemonId === my.id && c.opponentPokemonId === opp.id
+                          );
+                          const isAdv = cell?.status === 'advantage';
+                          const isDis = cell?.status === 'disadvantage';
+
+                          return (
+                            <td
+                              key={opp.id}
+                              onClick={() => {
+                                if (cell) {
+                                  setSelectedMatrixCell({
+                                    myPokemon: my,
+                                    oppPokemon: opp,
+                                    myOff: cell.myOffenseMult,
+                                    oppOff: cell.opponentOffenseMult,
+                                    tip: cell.tip,
+                                  });
+                                }
+                              }}
+                              className={`p-2 text-center font-mono font-bold cursor-pointer transition-colors border-r border-slate-100 ${
+                                isAdv
+                                  ? 'bg-emerald-50 text-emerald-700 hover:bg-emerald-100'
+                                  : isDis
+                                  ? 'bg-rose-50 text-rose-700 hover:bg-rose-100'
+                                  : 'text-slate-600 hover:bg-slate-100'
+                              }`}
+                            >
+                              <div className="text-[11px]">
+                                {cell?.myOffenseMult}x
+                              </div>
+                              <span className="text-[9px] font-normal block text-slate-400">
+                                {isAdv ? '🟢 佔優' : isDis ? '🔴 劣勢' : '⚪ 平手'}
+                              </span>
+                            </td>
+                          );
+                        })}
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+
+              {/* Selected Cell Modal/Detail */}
+              {selectedMatrixCell && (
+                <div className="p-3.5 rounded-xl bg-blue-50/80 border border-blue-200 text-xs flex items-center justify-between gap-3">
+                  <div className="space-y-0.5">
+                    <div className="font-bold text-blue-900">
+                      【我方 {selectedMatrixCell.myPokemon.nameZh}】VS【敵方 {selectedMatrixCell.oppPokemon.nameZh}】
+                    </div>
+                    <div className="text-slate-600">
+                      我方輸出打擊：<strong className="text-emerald-700 font-mono">{selectedMatrixCell.myOff}x</strong> · 對手輸出打擊：<strong className="text-rose-700 font-mono">{selectedMatrixCell.oppOff}x</strong>。
+                      {selectedMatrixCell.tip}
+                    </div>
+                  </div>
+                  <button
+                    onClick={() => setSelectedMatrixCell(null)}
+                    className="text-xs text-blue-700 font-bold underline cursor-pointer shrink-0"
+                  >
+                    關閉
+                  </button>
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* Sub-Tab 2: Speed Tiers Ranking */}
+          {activeTacticsTab === 'speed' && (
+            <div className="space-y-3">
+              <div className="text-xs text-slate-500">
+                速度線全體排行（決定首回合出招先手權，藍色為我方，紅色為敵方）：
+              </div>
+              <div className="space-y-1.5">
+                {tacticsAnalysis.speedTiers.map((item) => (
+                  <div
+                    key={`${item.pokemon.id}-${item.speedRank}`}
+                    className={`p-2.5 rounded-xl border flex items-center justify-between text-xs ${
+                      item.isMyTeam
+                        ? 'bg-blue-50/60 border-blue-200 text-blue-950'
+                        : 'bg-rose-50/60 border-rose-200 text-rose-950'
+                    }`}
+                  >
+                    <div className="flex items-center gap-3">
+                      <span className="w-5 text-center font-mono font-black text-slate-400 text-xs">
+                        #{item.speedRank}
+                      </span>
+                      <img
+                        src={item.pokemon.officialArtUrl}
+                        alt={item.pokemon.nameZh}
+                        referrerPolicy="no-referrer"
+                        className="w-6 h-6 object-contain"
+                      />
+                      <span className="font-bold">{item.pokemon.nameZh}</span>
+                      <span className="text-[10px] px-1.5 py-0.5 rounded font-mono font-bold">
+                        {item.isMyTeam ? '我方隊伍' : '敵方對手'}
+                      </span>
+                    </div>
+
+                    <div className="flex items-center gap-3">
+                      <div className="w-32 bg-slate-200 rounded-full h-1.5 hidden sm:block overflow-hidden">
+                        <div
+                          className={`h-1.5 rounded-full ${item.isMyTeam ? 'bg-blue-600' : 'bg-rose-500'}`}
+                          style={{ width: `${Math.min(100, (item.speed / 160) * 100)}%` }}
+                        />
+                      </div>
+                      <span className="font-mono font-black text-sm">
+                        速 {item.speed}
+                      </span>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* Sub-Tab 3: Tera & Lead Strategy Details */}
+          {activeTacticsTab === 'tera' && (
+            <div className="space-y-4 text-xs">
+              <div className="p-4 rounded-2xl bg-blue-50/50 border border-blue-200 space-y-2">
+                <h4 className="font-black text-blue-900 text-sm flex items-center gap-1.5">
+                  <Zap className="w-4 h-4 text-blue-600" />
+                  首回合開局與先手權博弈指引
+                </h4>
+                <p className="text-slate-700 leading-relaxed">
+                  {tacticsAnalysis.leadRecommendation.leadStrategy}
+                </p>
+              </div>
+
+              <div className="p-4 rounded-2xl bg-amber-50/50 border border-amber-200 space-y-2">
+                <h4 className="font-black text-amber-900 text-sm flex items-center gap-1.5">
+                  <Crown className="w-4 h-4 text-amber-600" />
+                  關鍵太晶化發動時機與防禦轉折
+                </h4>
+                <p className="text-slate-700 leading-relaxed">
+                  {tacticsAnalysis.teraPriority.rationale}
+                </p>
+              </div>
+
+              <div className="p-4 rounded-2xl bg-rose-50/50 border border-rose-200 space-y-2">
+                <h4 className="font-black text-rose-900 text-sm flex items-center gap-1.5">
+                  <Target className="w-4 h-4 text-rose-600" />
+                  敵方頭號主力威脅消滅指引
+                </h4>
+                <p className="text-slate-700 leading-relaxed">
+                  {tacticsAnalysis.threatAnalysis.threatReason} {tacticsAnalysis.threatAnalysis.counterSolution}
+                </p>
+              </div>
+            </div>
+          )}
+
+          {/* Sub-Tab 4: AI Deep Coach Breakdown */}
+          {activeTacticsTab === 'ai' && aiAnalysisText && (
+            <div className="p-5 rounded-2xl bg-slate-50 border border-slate-200 text-xs leading-relaxed space-y-3 font-sans">
+              <div className="flex items-center gap-2 pb-2 border-b border-slate-200 font-black text-slate-800 text-sm">
+                <Sparkles className="w-4 h-4 text-amber-500" />
+                Gemini AI 世界大賽冠軍教練 6v6 深度戰術復盤
+              </div>
+              <div className="whitespace-pre-wrap text-slate-700">
+                {aiAnalysisText}
+              </div>
+            </div>
+          )}
         </section>
       </main>
 
@@ -854,7 +1189,7 @@ export default function App() {
           <div className="flex items-center gap-2">
             <span className="font-black text-amber-600 tracking-tight font-mono">POKÉMON CHAMPIONS</span>
             <span aria-hidden="true">·</span>
-            <span>官方級別對戰配裝與 18 屬性勝率分析指南</span>
+            <span>(1) 照片辨識 (2) 建議我方6隻 (3) 戰術分析</span>
           </div>
           <div className="text-[11px] text-slate-600 font-mono">
             資料參考：
@@ -870,37 +1205,53 @@ export default function App() {
         </div>
       </footer>
 
-      {/* Selectors Modals for Instant Pick from all Pokemon */}
+      {/* Selector Modal for Opponent Slot Replacement */}
       <PokemonSelectorModal
-        isOpen={isMySelectorOpen}
-        onClose={() => setIsMySelectorOpen(false)}
-        onSelect={(p) => setMyPokemon(p)}
-        title="選擇我方參戰寶可夢 (Select My Pokémon)"
-        currentSelectedId={myPokemon.id}
+        isOpen={editingOpponentIndex !== null}
+        onClose={() => setEditingOpponentIndex(null)}
+        onSelect={(p) => {
+          if (editingOpponentIndex !== null) {
+            const updated = [...opponentTeam];
+            updated[editingOpponentIndex] = p;
+            setOpponentTeam(updated);
+            setEditingOpponentIndex(null);
+          }
+        }}
+        title={`更換敵方第 ${editingOpponentIndex !== null ? editingOpponentIndex + 1 : 1} 隻寶可夢`}
+        currentSelectedId={editingOpponentIndex !== null ? opponentTeam[editingOpponentIndex]?.id : undefined}
       />
 
+      {/* Selector Modal for My Team Slot Replacement */}
       <PokemonSelectorModal
-        isOpen={isOpponentSelectorOpen}
-        onClose={() => setIsOpponentSelectorOpen(false)}
-        onSelect={(p) => setOpponentPokemon(p)}
-        title="選擇敵方對手寶可夢 (Select Opponent Pokémon)"
-        currentSelectedId={opponentPokemon.id}
-      />
-
-      {/* Photo Recognition Modal */}
-      <PhotoRecognitionModal
-        isOpen={isPhotoModalOpen}
-        onClose={() => setIsPhotoModalOpen(false)}
-        onSelectOpponent={(p) => setOpponentPokemon(p)}
+        isOpen={editingMyIndex !== null}
+        onClose={() => setEditingMyIndex(null)}
+        onSelect={(p) => {
+          if (editingMyIndex !== null) {
+            const updatedOverrides = [...myCustomOverrides];
+            updatedOverrides[editingMyIndex] = p;
+            setMyCustomOverrides(updatedOverrides);
+            setEditingMyIndex(null);
+          }
+        }}
+        title={`更換我方第 ${editingMyIndex !== null ? editingMyIndex + 1 : 1} 隻寶可夢`}
+        currentSelectedId={editingMyIndex !== null ? myTeam[editingMyIndex]?.id : undefined}
       />
 
       {/* Voice Assistant Modal */}
       <VoiceAssistantModal
         isOpen={isVoiceModalOpen}
         onClose={() => setIsVoiceModalOpen(false)}
-        onSelectMyPokemon={(p) => setMyPokemon(p)}
-        onSelectOpponentPokemon={(p) => setOpponentPokemon(p)}
-        currentSpeechText={speechBriefingText}
+        onSelectMyPokemon={(p) => {
+          const updated = [...myCustomOverrides];
+          updated[0] = p;
+          setMyCustomOverrides(updated);
+        }}
+        onSelectOpponentPokemon={(p) => {
+          const updated = [...opponentTeam];
+          updated[0] = p;
+          setOpponentTeam(updated);
+        }}
+        currentSpeechText={tacticsAnalysis.speechSummary}
         isSpeaking={isSpeaking}
         onToggleSpeech={handleToggleSpeech}
       />

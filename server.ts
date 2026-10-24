@@ -105,10 +105,169 @@ app.post('/api/vision/recognize-pokemon', async (req, res) => {
   }
 });
 
-// API route for AI Champions Strategic Matchup Analysis
+// API route for AI Vision 6-Pokemon Team Recognition from Photo / Screenshot
+app.post('/api/vision/recognize-team', async (req, res) => {
+  try {
+    const { image, mimeType = 'image/jpeg' } = req.body;
+
+    if (!image) {
+      return res.status(400).json({ error: '請提供要辨識的寶可夢隊伍照片或截圖' });
+    }
+
+    const cleanBase64 = image.includes('base64,') ? image.split('base64,')[1] : image;
+    const detectedMimeType = image.startsWith('data:') ? image.split(';')[0].replace('data:', '') : mimeType;
+
+    const apiKey = process.env.GEMINI_API_KEY;
+    if (!apiKey) {
+      return res.status(200).json({
+        success: false,
+        message: '未偵測到 GEMINI_API_KEY，請確認環境金鑰配置。',
+      });
+    }
+
+    const ai = new GoogleGenAI({
+      apiKey,
+      httpOptions: {
+        headers: {
+          'User-Agent': 'aistudio-build',
+        },
+      },
+    });
+
+    const visionPrompt = `你是世界級寶可夢辨識專家與《寶可夢 Champions》（victorpoke-champions.com）官方裁判。
+請精確辨識這張照片、對戰選人畫面（Team Preview）、排位賽陣容截圖或隊伍卡片中的「敵方寶可夢隊伍（最多 6 隻）」。
+請仔細觀察圖片中的每個寶可夢頭像、模型或名稱，依序辨識出畫面中的每一隻寶可夢（最多 6 隻）。
+注意特別判斷 MEGA 進化型態（例如超級噴火龍X/Y、超級水箭龜、超級巨金怪、超級快龍等）與地區型態（例如洗翠風速狗、阿羅拉雷丘、伽勒爾呆殼獸等）。
+
+請嚴格輸出符合以下結構的 JSON：
+{
+  "pokemonList": [
+    {
+      "nameZh": "繁體中文名稱，例如：振翼髮",
+      "nameEn": "英文名稱，例如：Flutter Mane",
+      "form": "標準形態 / MEGA進化 / 地區形態",
+      "confidence": 0.95
+    }
+  ],
+  "teamArchetype": "分析敵方隊伍體系，例如：極限順風猛攻隊 / 空間特攻隊 / 雨天兄弟隊 / 晴天重砲隊 / 傳統平衡聯防隊",
+  "visualSummary": "辨識說明（簡述辨識到的陣容特徵與總共找到幾隻）"
+}`;
+
+    const response = await ai.models.generateContent({
+      model: 'gemini-3.8-flash',
+      contents: [
+        {
+          parts: [
+            {
+              inlineData: {
+                mimeType: detectedMimeType || 'image/jpeg',
+                data: cleanBase64,
+              },
+            },
+            {
+              text: visionPrompt,
+            },
+          ],
+        },
+      ],
+      config: {
+        responseMimeType: 'application/json',
+      },
+    });
+
+    const responseText = response.text?.trim() || '{}';
+    let parsedData: any = {};
+    try {
+      parsedData = JSON.parse(responseText);
+    } catch {
+      parsedData = {
+        pokemonList: [],
+        teamArchetype: '對戰隊伍',
+        visualSummary: responseText,
+      };
+    }
+
+    return res.json({
+      success: true,
+      data: parsedData,
+    });
+  } catch (error: any) {
+    console.error('Gemini team vision recognition error:', error);
+    return res.status(500).json({
+      error: error.message || '隊伍照片辨識失敗，請確認圖片清晰度後重試。',
+    });
+  }
+});
+
+// API route for 6v6 Team Strategic Matchup Analysis
+app.post('/api/tactics/gemini-team-analysis', async (req, res) => {
+  try {
+    const { myTeam, opponentTeam } = req.body;
+
+    if (!myTeam || !opponentTeam || !Array.isArray(myTeam) || !Array.isArray(opponentTeam)) {
+      return res.status(400).json({ error: '缺少 6v6 隊伍資料' });
+    }
+
+    const apiKey = process.env.GEMINI_API_KEY;
+    if (!apiKey) {
+      return res.status(200).json({
+        analysis: `【戰術分析提示】目前處於本機離線戰術模式。
+我方 6 隻推薦對抗陣容具備高度聯防屬性覆蓋，請依照「首發建議」先以控速手壓制敵方首輪攻勢，並針對敵方核心威脅留存太晶化逆轉反擊！`,
+      });
+    }
+
+    const ai = new GoogleGenAI({
+      apiKey,
+      httpOptions: {
+        headers: {
+          'User-Agent': 'aistudio-build',
+        },
+      },
+    });
+
+    const myTeamSummary = myTeam
+      .map((p: any, i: number) => `${i + 1}. ${p.nameZh}（屬性：${p.types?.join('/')}，速度：${p.baseStats?.speed}，定位：${p.roleTitle || '核心'}）`)
+      .join('\n');
+
+    const oppTeamSummary = opponentTeam
+      .map((p: any, i: number) => `${i + 1}. ${p.nameZh}（屬性：${p.types?.join('/')}，速度：${p.baseStats?.speed}，弱點：${p.weaknesses?.slice(0, 3).join('/')}）`)
+      .join('\n');
+
+    const prompt = `你是《寶可夢 Champions》（victorpoke-champions.com）WCS 世界錦標賽世界冠軍主教練與資深戰術總監。
+請針對這場關鍵 6v6 Champions 級別賽對抗，提供最專業、具世界大賽奪冠水準的「全隊戰術復盤指引」（繁體中文）：
+
+【敵方 6 隻陣容（紅方）】：
+${oppTeamSummary}
+
+【我方建議 6 隻對抗陣容（藍方）】：
+${myTeamSummary}
+
+請提供條理清晰的 4 大實戰博弈拆解：
+1. 🌟【最佳首發開局推薦 (Lead Selection)】：我方應該選哪 2 隻作為首發開局（Lead）？面對敵方最可能開局的威脅，首回合應該如何博弈（擊掌奇襲、順風控速、守住或直取擊殺）？
+2. 🛡️【聯防輪轉與後備切換 (Pivoting & Defensive Core)】：如何透過我方 6 隻的屬性免疫與抵抗（水地火草妖鋼輪轉），有效化解對方的核心輸出？
+3. ⚡【關鍵太晶化發動時機 (Tera Dynamics)】：這場 6v6 中，我方哪一隻寶可夢是太晶化的第一優先級？在何種對位與時機點太晶化能直接鎖定勝局？
+4. 🎯【敵方威脅優先擊殺順序 (Kill Priority)】：分析對手 6 隻中對我方威脅最大的 2 隻是誰？如何集火或先手封鎖？
+
+語言要求：繁體中文、電競戰術術語專業精準、實戰含金量極高！`;
+
+    const response = await ai.models.generateContent({
+      model: 'gemini-3.8-flash',
+      contents: prompt,
+    });
+
+    return res.json({ analysis: response.text });
+  } catch (error: any) {
+    console.error('Gemini team analysis error:', error);
+    return res.status(500).json({
+      error: error.message || 'AI 戰術分析生成失敗，請稍後再試。',
+    });
+  }
+});
+
+// API route for AI Champions Strategic Matchup Analysis (Single 1v1)
 app.post('/api/tactics/gemini-analysis', async (req, res) => {
   try {
-    const { myPokemon, opponentPokemon, format = 'Double', myBuild, question } = req.body;
+    const { myPokemon, opponentPokemon, format = 'Single', myBuild, question } = req.body;
 
     if (!myPokemon || !opponentPokemon) {
       return res.status(400).json({ error: '缺少寶可夢資料' });
@@ -118,8 +277,7 @@ app.post('/api/tactics/gemini-analysis', async (req, res) => {
     if (!apiKey) {
       return res.status(200).json({
         analysis: `【戰術分析提示】目前處於本機離線戰術模式。
-對戰建議：${myPokemon.nameZh}（屬性：${myPokemon.types.join('/')}）面對 ${opponentPokemon.nameZh}（屬性：${opponentPokemon.types.join('/')}）時，請參考「對位勝率分析」中的屬性剋制倍率與速度線優先度。
-在 ${format === 'Double' ? 'VGC 雙打' : '單打'} 環境下，請特別注意首回合「守住」與「擊掌奇襲」的博弈，並在敵方交出高威力剋制技能時精準太晶化進行反制！`,
+對戰建議：${myPokemon.nameZh}（屬性：${myPokemon.types.join('/')}）面對 ${opponentPokemon.nameZh}（屬性：${opponentPokemon.types.join('/')}）時，請參考「對位勝率分析」中的屬性剋制倍率與速度線優先度。`,
       });
     }
 
@@ -134,34 +292,12 @@ app.post('/api/tactics/gemini-analysis', async (req, res) => {
 
     const activeBuild = myBuild || myPokemon.builds?.[0];
 
-    const prompt = `你是《寶可夢 Champions》（Pokémon Champions，參考資料 victorpoke-champions.com）WCS 世界錦標賽（World Championships）總冠軍主教練與資深職業選手對戰數據分析師。
-請針對以下兩位玩家的 Champions 官方級別賽對決，提供具備世界冠軍決賽水準的精闢對局戰術指引（請以繁體中文回答）：
-
-【賽制規格】：${format === 'Double' ? 'VGC 官方雙打 (Double Battle)' : '官方單打排位 (Single Battle)'}
-
-【我方寶可夢 (藍方)】：${myPokemon.nameZh}（${myPokemon.nameEn} · #${myPokemon.pokedexNumber}）
-- 屬性：${myPokemon.types.join(' / ')}
-- 基準速度：${myPokemon.baseStats.speed} | 總種族值：${myPokemon.baseStats.total}
-- 核心特性：${activeBuild?.ability?.nameZh || myPokemon.primaryAbility.nameZh}
-- 攜帶道具：${activeBuild?.heldItem?.nameZh || '推薦道具'}（${activeBuild?.heldItem?.effect || ''}）
-- 推薦太晶屬性：太晶【${activeBuild?.teraType || 'Water'}】
-- 性格與努力值：${activeBuild?.nature || '爽朗'} | ${activeBuild?.evSpread || '標準分配'}
-- 4 招式配置：${activeBuild?.moves ? activeBuild.moves.map((m: any) => `${m.nameZh}(${m.type} ${m.category})`).join('、') : '標準四招'}
-
-【敵方對手寶可夢 (紅方)】：${opponentPokemon.nameZh}（${opponentPokemon.nameEn} · #${opponentPokemon.pokedexNumber}）
-- 屬性：${opponentPokemon.types.join(' / ')}
-- 基準速度：${opponentPokemon.baseStats.speed} | 總種族值：${opponentPokemon.baseStats.total}
-- 弱點屬性：${opponentPokemon.weaknesses?.join('、') || '無'}
-
-${question ? `【玩家戰術諮詢提問】：${question}` : ''}
-
-請以世界錦標賽決賽級別之博弈維度，提供以下 4 大結構化戰術拆解：
-1. ⚡【首回合出招與先手權博弈】：速度線比對（${myPokemon.nameZh} 速 ${myPokemon.baseStats.speed} vs ${opponentPokemon.nameZh} 速 ${opponentPokemon.baseStats.speed}）、先制招式（如神速/擊掌奇襲/突襲）、圍巾/驅勁能量可能造成的速度翻轉，以及開局該強攻、守住還是換人。
-2. 🛡️【太晶屬性防禦與斬殺反轉】：我方太晶化【${activeBuild?.teraType || 'Water'}】的最佳發動時機，如何化解對手的剋制招式，並在何種血線下直接觸發逆轉擊殺。
-3. 🎯【招式選擇與傷害計算臨界點】：面對對手的屬性抗性與防守特點，我方 4 個招式的最優出招優先級，以及如何規避對手氣勢披帶或強化特性的陷阱。
-4. 🤝【雙打聯手輪轉與聯防保排】：${format === 'Double' ? '推薦的最佳聯手搭檔（如熾焰咆哮虎威嚇、快龍神速、敗露球菇憤怒粉），如何透過換人輪轉化解敵方攻勢並維持主動權。' : '後備隊友聯防切換建議，如何透過屬性抵抗換入並完成殘局清場。'}
-
-要求：繁體中文、專業電競對戰術語精確（VGC 雙打博弈、守住、輪轉、太晶化、速度線、確一/確二斬殺線），條理清晰有權威感！`;
+    const prompt = `你是《寶可夢 Champions》（victorpoke-champions.com）WCS 世界錦標賽冠軍教練。
+請針對以下對決提供專業對局戰術指引（繁體中文）：
+我方：${myPokemon.nameZh}（屬性：${myPokemon.types.join('/')}，速度：${myPokemon.baseStats.speed}）
+敵方：${opponentPokemon.nameZh}（屬性：${opponentPokemon.types.join('/')}，速度：${opponentPokemon.baseStats.speed}）
+${question ? `提問：${question}` : ''}
+請給出速度線比對、首回合出招、太晶化發動時機與擊殺斬殺線。`;
 
     const response = await ai.models.generateContent({
       model: 'gemini-3.8-flash',
@@ -172,7 +308,7 @@ ${question ? `【玩家戰術諮詢提問】：${question}` : ''}
   } catch (error: any) {
     console.error('Gemini analysis error:', error);
     return res.status(500).json({
-      error: error.message || 'AI 戰術顧問分析生成失敗，請稍後再試。',
+      error: error.message || 'AI 戰術分析生成失敗，請稍後再試。',
     });
   }
 });
