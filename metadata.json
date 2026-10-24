@@ -1,0 +1,6 @@
+{
+  "name": "Pokémon UNITE 冠軍級別對戰策略與勝率分析平台",
+  "description": "WCS 世界錦標賽與大師巔峰賽事規格：輸入雙方寶可夢，即時取得世界冠軍級配裝、微操幀數連招、Ban/Pick 對位克制與烈空坐斬殺勝率分析。",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
