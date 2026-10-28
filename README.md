@@ -16,12 +16,6 @@
 
 ---
 
-## 📸 應用實際截圖 (App Real Screenshot)
-
-![Champion 級別賽對戰分析真實截圖](./public/screenshot.jpg)
-
----
-
 ## ✨ 核心對戰流程與功能
 
 ### 1. 📷 照片辨識對方寶可夢（6隻）
