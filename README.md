@@ -1,6 +1,6 @@
 # Champion 級別賽對戰分析 (Competitive Battle Analyzer)
 
-[![Live Demo](https://img.shields.io/badge/Demo-Live%20App-0ea5e9?style=for-the-badge&logo=google-chrome&logoColor=white)](https://ais-pre-jvak75xkk52uysj6wttnap-56578231960.us-west1.run.app)
+[![Dev App](https://img.shields.io/badge/App-Online-0ea5e9?style=for-the-badge&logo=google-chrome&logoColor=white)](https://ais-dev-jvak75xkk52uysj6wttnap-56578231960.us-west1.run.app)
 [![React](https://img.shields.io/badge/React-18-61DAFB?style=for-the-badge&logo=react&logoColor=black)](https://react.dev/)
 [![TypeScript](https://img.shields.io/badge/TypeScript-5.0-3178C6?style=for-the-badge&logo=typescript&logoColor=white)](https://www.typescriptlang.org/)
 [![Tailwind CSS](https://img.shields.io/badge/Tailwind-v4-06B6D4?style=for-the-badge&logo=tailwindcss&logoColor=white)](https://tailwindcss.com/)
@@ -9,19 +9,16 @@
 
 ---
 
-## 🌐 線上體驗連結 (Live Application)
+## 🌐 線上體驗連結 (App URL)
 
-- **正式發布網址 (Shared App)**:  
-  👉 **[https://ais-pre-jvak75xkk52uysj6wttnap-56578231960.us-west1.run.app](https://ais-pre-jvak75xkk52uysj6wttnap-56578231960.us-west1.run.app)**
-
-- **開發測試環境 (Dev Preview)**:  
+- **網頁連結 (App Link)**:  
   👉 **[https://ais-dev-jvak75xkk52uysj6wttnap-56578231960.us-west1.run.app](https://ais-dev-jvak75xkk52uysj6wttnap-56578231960.us-west1.run.app)**
 
 ---
 
-## 📸 應用截圖 (App Preview)
+## 📸 應用實際截圖 (App Real Screenshot)
 
-![Champion 級別賽對戰分析預覽](./public/screenshot.jpg)
+![Champion 級別賽對戰分析真實截圖](./public/screenshot.jpg)
 
 ---
 
